@@ -1,7 +1,7 @@
 from .kafka_consumer import DigitalTwinOrchestrator
-from .influx_writer import InfluxDBWriter
+from .qlite_writer import SQLiteWriter
 
 __all__ = [
     "DigitalTwinOrchestrator",
-    "InfluxDBWriter"
+    "SQLiteWriter"
 ]

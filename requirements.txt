@@ -5,4 +5,3 @@ pandas>=2.0.0
 python-can>=4.2.0
 cantools>=38.0.0
 kafka-python>=2.0.2
-influxdb-client>=1.36.0

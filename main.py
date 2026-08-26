@@ -20,7 +20,7 @@ from src.physics_engine.thermodynamics import ZeroEngineModel
 from src.physics_engine.residual_calculator import ResidualCalculator
 from src.ai_pipeline.pinn_model import PhysicsInformedNN
 from src.ai_pipeline.lstm_rul import RULPredictorEngine
-from src.orchestration.influx_writer import InfluxDBWriter
+from src.orchestration.qlite_writer import SQLiteWriter
 
 # Configure Logging
 logging.basicConfig(
@@ -71,8 +71,8 @@ class UAVEngineDigitalTwinApp:
         self.rul_engine.model.eval()
 
         # 4. Initialize Database Persistence Layer
-        logging.info("[4/5] Connecting to InfluxDB Time-Series Database...")
-        self.influx_writer = InfluxDBWriter()
+        logging.info("[4/5] Connecting to SQLite Database...")
+        self.sqlite_writer = SQLiteWriter()
 
         logging.info("[5/5] All Edge Subsystems Successfully Online!\n")
 
@@ -117,8 +117,8 @@ class UAVEngineDigitalTwinApp:
             "maintenance_urgency": rul_assessment["maintenance_urgency"]
         }
 
-        # Step F: Persist state to InfluxDB time-series database
-        self.influx_writer.write_twin_state(twin_state)
+        # Step F: Persist state to SQLite database
+        self.sqlite_writer.write_twin_state(twin_state)
 
         return twin_state
 
@@ -169,7 +169,7 @@ class UAVEngineDigitalTwinApp:
             logging.info("\nExecution Stopped by User.")
 
         finally:
-            self.influx_writer.close()
+            self.sqlite_writer.close()
 
 
 if __name__ == "__main__":

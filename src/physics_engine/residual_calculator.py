@@ -13,45 +13,25 @@ class ResidualCalculator:
             "Delta_MAP": 5.0       # Max 5.0 kPa deviation allowed for Manifold Pressure
         }
 
-    def compute_residuals(self, telemetry_actual: dict, physics_baseline: dict) -> dict:
-    # Convert Physics outputs from Kelvin to Celsius if applicable
-        physics_cht_c = physics_baseline.get("Physics_CHT", 388.15) - 273.15
-        physics_egt_c = physics_baseline.get("Physics_EGT", 1093.15) - 273.15
+    def compute_residuals(self, actual: dict, baseline: dict) -> dict:
+        actual_cht = float(actual.get("CHT", 115.0))
+        actual_egt = float(actual.get("EGT", 820.0))
 
-        actual_cht = telemetry_actual.get("CHT", 115.0)
-        actual_egt = telemetry_actual.get("EGT", 820.0)
+        physics_cht = float(baseline.get("Physics_CHT", 115.0))
+        physics_egt = float(baseline.get("Physics_EGT", 820.0))
 
-        delta_cht = abs(actual_cht - physics_cht_c)
-        delta_egt = abs(actual_egt - physics_egt_c)
+        # Auto-convert Kelvin to Celsius if baseline is > 200
+        if physics_cht > 200.0:
+            physics_cht -= 273.15
+        if physics_egt > 500.0:
+            physics_egt -= 273.15
 
-        return {
-        "Delta_CHT": round(delta_cht, 2),
-        "Delta_EGT": round(delta_egt, 2)
-    }
-
-        for actual_key, physics_key in param_mapping.items():
-            if actual_key in telemetry_data and physics_key in physics_baseline:
-                actual_val = float(telemetry_data[actual_key])
-                baseline_val = float(physics_baseline[physics_key])
-
-                # Calculate absolute delta ΔY = |Actual - Baseline|
-                delta = round(abs(actual_val - baseline_val), 3)
-                delta_key = f"Delta_{actual_key}"
-                residuals[delta_key] = delta
-
-                # Evaluate against dynamic tolerance limits
-                max_tolerance = self.thresholds.get(delta_key, 10.0)
-                is_exceeded = delta > max_tolerance
-                flags[f"{delta_key}_Flag"] = is_exceeded
-
-                if is_exceeded:
-                    anomaly_detected = True
+        delta_cht = abs(actual_cht - physics_cht)
+        delta_egt = abs(actual_egt - physics_egt)
 
         return {
-            "residuals": residuals,
-            "flags": flags,
-            "anomaly_detected": anomaly_detected,
-            "pinn_input_vector": np.array(list(residuals.values()), dtype=np.float32)
+            "Delta_CHT": round(delta_cht, 2),
+            "Delta_EGT": round(delta_egt, 2)
         }
 
 
