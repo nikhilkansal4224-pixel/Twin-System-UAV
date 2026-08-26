@@ -1,0 +1,5 @@
+{
+  "bootstrap_servers": ["localhost:9092"],
+  "telemetry_topic": "uav.engine.telemetry",
+  "analytics_topic": "uav.engine.analytics"
+}
