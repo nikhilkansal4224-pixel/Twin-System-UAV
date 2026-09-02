@@ -77,6 +77,8 @@ jobs:
               RMDir /r `"`$INSTDIR`"
           SectionEnd
           "@ | Out-File -Encoding ascii installer.nsi
+          
+          # Run makensis directly from PATH
           makensis installer.nsi
 
       # --- LINUX BUILD (.AppImage) ---
@@ -85,9 +87,8 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
           
-          # Use continuous release URL for appimagetool
-          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
+          wget https://github.com/probonopd/go-appimage/releases/download/continuous/appimagetool-832-x86_64.AppImage -O appimagetool.AppImage
+          chmod +x appimagetool.AppImage
           
           mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
           cp -r dist/UAV_Digital_Twin/* dist/AppDir/usr/bin/
@@ -98,7 +99,8 @@ jobs:
           echo -e '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/usr/bin/UAV_Digital_Twin" "$@"' > dist/AppDir/AppRun
           chmod +x dist/AppDir/AppRun
           
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage dist/AppDir dist/UAV_Digital_Twin_v1.0-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool.AppImage dist/AppDir/
+          mv UAV_Digital_Twin-*.AppImage dist/UAV_Digital_Twin_v1.0-x86_64.AppImage || true
 
       # --- UPLOAD ARTIFACTS ---
       - name: Upload Output Installers
