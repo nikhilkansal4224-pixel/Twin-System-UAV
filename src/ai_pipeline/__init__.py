@@ -1,10 +1,16 @@
-from .pinn_model import PhysicsInformedNN
+
 from .loss_functions import PhysicsInformedLoss
 from .fault_generator import SyntheticFaultInverter
-from .lstm_rul import LSTMRULEstimator, RULPredictorEngine
+
+# src/ai_pipeline/__init__.py
+
+from .lstm_rul import RULPredictorEngine
+
+# Alias for backward compatibility if other modules expect LSTMRULEstimator
+LSTMRULEstimator = RULPredictorEngine
 
 __all__ = [
-    "PhysicsInformedNN",
+    
     "PhysicsInformedLoss",
     "SyntheticFaultInverter",
     "LSTMRULEstimator",

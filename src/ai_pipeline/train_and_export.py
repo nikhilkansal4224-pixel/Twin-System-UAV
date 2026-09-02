@@ -9,12 +9,19 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Handle cross-module architecture components
 from src.ai_pipeline.pinn_model import PhysicsInformedNN
 from src.ai_pipeline.loss_functions import PhysicsInformedLoss
 from src.ai_pipeline.lstm_rul import LSTMRULEstimator
 from src.ai_pipeline.fault_generator import SyntheticFaultInverter
 
-# Create directory to store exported model weights
+# =====================================================================
+# GLOBAL HARDWARE DEVICE CONTEXT DETECTION
+# =====================================================================
+device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+print(f"[+] Directing compute workloads to accelerator target: {device}")
+
+# Create directory structures to store serialized weights
 WEIGHTS_DIR = os.path.join(project_root, "models", "saved_weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
@@ -27,7 +34,7 @@ LSTM_WEIGHTS_PATH = os.path.join(WEIGHTS_DIR, "lstm_rul_weights.pth")
 # =====================================================================
 def train_pinn_model(epochs=200, lr=0.001):
     print("\n[+] Initializing Offline PINN Training Routine...")
-    pinn = PhysicsInformedNN(input_dim=4, hidden_dim=64, output_dim=3)
+    pinn = PhysicsInformedNN(input_dim=4, hidden_dim=64, output_dim=3).to(device)
     loss_calculator = PhysicsInformedLoss(lambda_physics=0.25)
     optimizer = optim.Adam(pinn.parameters(), lr=lr)
 
@@ -35,44 +42,43 @@ def train_pinn_model(epochs=200, lr=0.001):
     fault_inverter = SyntheticFaultInverter()
     fault_df = fault_inverter.generate_fault_dataset(num_samples_per_fault=500)
 
-    # Convert fault dataset features to tensors
-    # Inputs: [Delta_CHT, Delta_EGT, Delta_Oil_P, Delta_MAP]
+    # Force continuous 32-bit allocation layout right at numpy concatenation phase
     inputs_np = np.column_stack([
         fault_df["CHT"].values - 115.0,
         fault_df["EGT"].values - 820.0,
         fault_df["Oil_Pressure"].values - 4.5,
         np.zeros(len(fault_df))
-    ])
+    ]).astype(np.float32)
     
-    # Targets: [P_pred, T_pred, dT_dt_pred]
     targets_np = np.column_stack([
         101325.0 + inputs_np[:, 3] * 1000.0,
         350.0 + inputs_np[:, 0] * 2.0,
         120.0 + inputs_np[:, 1] * 1.5
-    ])
+    ]).astype(np.float32)
 
-    inputs_tensor = torch.tensor(inputs_np, dtype=torch.float32)
-    targets_tensor = torch.tensor(targets_np, dtype=torch.float32)
+    # Fast memory zero-copy assignment to target compute accelerator hardware
+    inputs_tensor = torch.from_numpy(inputs_np).to(device)
+    targets_tensor = torch.from_numpy(targets_np).to(device)
 
-    # Physical Context Input Tensors
+    # Physical Context Input Tensors allocated natively on device path
     num_samples = len(fault_df)
     physics_context = {
-        "volume": torch.full((num_samples,), 0.0003, dtype=torch.float32),
-        "mass": torch.full((num_samples,), 0.00035, dtype=torch.float32),
-        "dq_in": torch.full((num_samples,), 2500.0, dtype=torch.float32),
-        "dq_wall": torch.full((num_samples,), 400.0, dtype=torch.float32),
-        "dv_dt": torch.full((num_samples,), 0.0015, dtype=torch.float32)
+        "volume": torch.full((num_samples,), 0.0003, dtype=torch.float32, device=device),
+        "mass": torch.full((num_samples,), 0.00035, dtype=torch.float32, device=device),
+        "dq_in": torch.full((num_samples,), 2500.0, dtype=torch.float32, device=device),
+        "dq_wall": torch.full((num_samples,), 400.0, dtype=torch.float32, device=device),
+        "dv_dt": torch.full((num_samples,), 0.0015, dtype=torch.float32, device=device)
     }
 
-    # Training Loop
+    # Training Loop Execution
     pinn.train()
     for epoch in range(1, epochs + 1):
         optimizer.zero_grad()
         predictions = pinn(inputs_tensor)
 
-        # Pad prediction matrix to match expected target format [Batch, 4]
-        padded_preds = torch.cat([predictions, torch.zeros((num_samples, 1))], dim=1)
-        padded_targets = torch.cat([targets_tensor, torch.zeros((num_samples, 1))], dim=1)
+        # Match dimensions to [Batch, 4] with unified runtime tracking allocations
+        padded_preds = torch.cat([predictions, torch.zeros((num_samples, 1), device=device)], dim=1)
+        padded_targets = torch.cat([targets_tensor, torch.zeros((num_samples, 1), device=device)], dim=1)
 
         l_total, l_data, l_gas, l_energy = loss_calculator(padded_preds, padded_targets, physics_context)
         l_total.backward()
@@ -81,7 +87,7 @@ def train_pinn_model(epochs=200, lr=0.001):
         if epoch % 50 == 0 or epoch == epochs:
             print(f"    Epoch [{epoch:03d}/{epochs:03d}] | Total Loss: {l_total.item():.4f} | Data Loss: {l_data.item():.4f} | Physics Penalty: {(l_gas + l_energy).item():.4f}")
 
-    # Export Weights
+    # Serialize weights state dict
     torch.save(pinn.state_dict(), PINN_WEIGHTS_PATH)
     print(f"[+] PINN Weights successfully exported to: '{PINN_WEIGHTS_PATH}'")
     return pinn
@@ -92,7 +98,8 @@ def train_pinn_model(epochs=200, lr=0.001):
 # =====================================================================
 def train_lstm_rul_model(epochs=150, lr=0.001, sequence_length=10):
     print("\n[+] Initializing Offline LSTM RUL Training Routine...")
-    lstm = LSTMRULEstimator(input_size=4, hidden_size=64, num_layers=2, output_size=1)
+    # LSTMRULEstimator now handles batch_first natively internally
+    lstm = LSTMRULEstimator(input_size=4, hidden_size=64, num_layers=2, output_size=1).to(device)
     criterion = torch.nn.MSELoss()
     optimizer = optim.Adam(lstm.parameters(), lr=lr)
 
@@ -113,14 +120,16 @@ def train_lstm_rul_model(epochs=150, lr=0.001, sequence_length=10):
             delta_map = (step * 0.02) * degradation_rate
             seq.append([delta_cht, delta_egt, delta_oil, delta_map])
             
+        # Target output calculation matching clean evaluation scales
         target_rul = max(0.0, start_rul - (sequence_length * degradation_rate * 5.0))
         sequences.append(seq)
         rul_labels.append([target_rul])
 
-    seq_tensor = torch.tensor(sequences, dtype=torch.float32)
-    labels_tensor = torch.tensor(rul_labels, dtype=torch.float32)
+    # Construct and pipe tensors directly to active runtime device target
+    seq_tensor = torch.tensor(sequences, dtype=torch.float32, device=device)
+    labels_tensor = torch.tensor(rul_labels, dtype=torch.float32, device=device)
 
-    # Training Loop
+    # Training Loop Execution
     lstm.train()
     for epoch in range(1, epochs + 1):
         optimizer.zero_grad()
@@ -132,7 +141,7 @@ def train_lstm_rul_model(epochs=150, lr=0.001, sequence_length=10):
         if epoch % 30 == 0 or epoch == epochs:
             print(f"    Epoch [{epoch:03d}/{epochs:03d}] | RUL MSE Loss: {loss.item():.4f}")
 
-    # Export Weights
+    # Serialize weights state dict
     torch.save(lstm.state_dict(), LSTM_WEIGHTS_PATH)
     print(f"[+] LSTM RUL Weights successfully exported to: '{LSTM_WEIGHTS_PATH}'")
     return lstm

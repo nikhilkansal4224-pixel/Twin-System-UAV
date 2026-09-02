@@ -1,0 +1,5 @@
+# Local Environment
+.env
+*.pth
+__pycache__/
+.venv/
