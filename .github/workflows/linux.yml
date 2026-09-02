@@ -1,0 +1,96 @@
+name: Build Linux Desktop Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Linux System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libgl1-mesa-glx \
+            libegl1-mesa \
+            fuse
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 PyQt6-WebEngine pyinstaller Pillow
+
+      - name: Build Linux AppImage
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
+          
+          VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          
+          # Fetch stable appimagetool release
+          wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool.AppImage
+          chmod +x appimagetool.AppImage
+          
+          mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
+          cp -r dist/UAV_Digital_Twin/* dist/AppDir/usr/bin/
+          cp assets/app_icon.png dist/AppDir/usr/share/icons/hicolor/512x512/apps/uav_digital_twin.png
+          cp assets/app_icon.png dist/AppDir/uav_digital_twin.png
+          
+          echo -e "[Desktop Entry]\nType=Application\nName=UAV Digital Twin\nExec=UAV_Digital_Twin\nIcon=uav_digital_twin\nCategories=Utility;" > dist/AppDir/uav_digital_twin.desktop
+          echo -e '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/usr/bin/UAV_Digital_Twin" "$@"' > dist/AppDir/AppRun
+          chmod +x dist/AppDir/AppRun
+          
+          # Extract binary to bypass FUSE restriction in runner
+          ./appimagetool.AppImage --appimage-extract
+          ARCH=x86_64 ./squashfs-root/AppRun dist/AppDir/ "dist/UAV_Digital_Twin_${VERSION}-x86_64.AppImage"
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: dist/*.AppImage
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-installer
+          path: release_assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release_assets/*.AppImage
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
