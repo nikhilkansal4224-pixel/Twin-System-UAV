@@ -95,6 +95,15 @@ class UAVEngineDigitalTwinApp:
         residual_results = self.residual_calc.compute_residuals(decoded_signals, physics_baseline)
         residuals = residual_results.get("residual_deltas", residual_results)
 
+        # Step C.5: Run PINN degradation severity scoring on the residual vector
+        pinn_vec = residual_results.get(
+            "pinn_input_vector",
+            [residuals.get("Delta_CHT", 0.0), residuals.get("Delta_EGT", 0.0), 0.0, 0.0]
+        )
+        with torch.no_grad():
+            pinn_out = self.pinn_model(torch.tensor([pinn_vec], dtype=torch.float32))
+        pinn_severity_score = round(float(pinn_out[0, 2].item()), 4)  # 3rd output = severity score
+
         # Step D: Update sequence buffer & estimate Remaining Useful Life (RUL)
         self.rul_engine.add_telemetry_step(residuals)
         rul_assessment = self.rul_engine.predict_rul()
@@ -112,6 +121,7 @@ class UAVEngineDigitalTwinApp:
             "physics_baseline": physics_baseline,
             "residual_deltas": residuals,
             "anomaly_flagged": is_anomaly,
+            "pinn_severity_score": pinn_severity_score,
             "rul_hours": rul_assessment["predicted_rul_hours"],
             "health_index_pct": rul_assessment["health_index_pct"],
             "maintenance_urgency": rul_assessment["maintenance_urgency"]
