@@ -19,19 +19,35 @@ class ResidualCalculator:
 
         physics_cht = float(baseline.get("Physics_CHT", 115.0))
         physics_egt = float(baseline.get("Physics_EGT", 820.0))
+        # Note: ZeroEngineModel.compute_physics_baseline() always returns Celsius,
+        # so no Kelvin->Celsius conversion is needed here.
 
-        # Auto-convert Kelvin to Celsius if baseline is > 200
-        if physics_cht > 200.0:
-            physics_cht -= 273.15
-        if physics_egt > 500.0:
-            physics_egt -= 273.15
+        delta_cht = round(abs(actual_cht - physics_cht), 2)
+        delta_egt = round(abs(actual_egt - physics_egt), 2)
 
-        delta_cht = abs(actual_cht - physics_cht)
-        delta_egt = abs(actual_egt - physics_egt)
+        residuals = {
+            "Delta_CHT": delta_cht,
+            "Delta_EGT": delta_egt
+        }
+
+        # Use the configured thresholds to flag anomalies
+        flags = {
+            "CHT_exceeded": delta_cht > self.thresholds["Delta_CHT"],
+            "EGT_exceeded": delta_egt > self.thresholds["Delta_EGT"]
+        }
+        anomaly_detected = any(flags.values())
 
         return {
-            "Delta_CHT": round(delta_cht, 2),
-            "Delta_EGT": round(delta_egt, 2)
+            "residuals": residuals,
+            "residual_deltas": residuals,        # kept for main.py's .get() call
+            "flags": flags,
+            "anomaly_detected": anomaly_detected,
+            "anomaly_flagged": anomaly_detected,  # alias, main.py checks both
+            "pinn_input_vector": [
+                delta_cht, delta_egt,
+                0.0,  # Delta_Oil_P placeholder — wire in real value if available
+                0.0   # Delta_MAP placeholder
+            ]
         }
 
 
