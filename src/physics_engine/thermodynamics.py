@@ -1,18 +1,31 @@
+import os
+import json
 import numpy as np
 from scipy.integrate import solve_ivp
 
 # =====================================================================
-# 1. ENGINE GEOMETRY & PHYSICAL CONSTANTS (e.g., Rotax 914 Aero Engine)
+# 1. ENGINE GEOMETRY & PHYSICAL CONSTANTS (loaded from config/engine_rotax914.json)
 # =====================================================================
-BORE = 0.0795         # Cylinder Bore diameter (m)
-STROKE = 0.061        # Piston Stroke length (m)
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "engine_rotax914.json")
+try:
+    with open(_CONFIG_PATH) as _f:
+        _engine_cfg = json.load(_f)
+    BORE = _engine_cfg["bore_mm"] / 1000.0          # Cylinder Bore diameter (m)
+    STROKE = _engine_cfg["stroke_mm"] / 1000.0       # Piston Stroke length (m)
+    CR = _engine_cfg["compression_ratio"]            # Compression Ratio
+    LHV_FUEL = _engine_cfg["lhv_mj_kg"] * 1e6         # Lower Heating Value of aviation fuel (J/kg)
+except (FileNotFoundError, KeyError) as _e:
+    print(f"[!] Warning: Could not load engine config ({_e}). Using Rotax 914 defaults.")
+    BORE = 0.0795
+    STROKE = 0.061
+    CR = 9.0
+    LHV_FUEL = 44.0e6
+
 CRANK_RADIUS = STROKE / 2.0  # Crankshaft radius r (m)
-CON_ROD = 0.112       # Connecting Rod length l (m)
-CR = 9.0              # Compression Ratio
+CON_ROD = 0.112       # Connecting Rod length l (m) — not currently in config, kept as constant
 PISTON_AREA = np.pi * (BORE / 2.0)**2
 DISPLACEMENT = PISTON_AREA * STROKE
 CLEARANCE_VOL = DISPLACEMENT / (CR - 1.0)
-LHV_FUEL = 44.0e6     # Lower Heating Value of aviation fuel (J/kg)
 R_AIR = 287.05        # Specific Gas Constant for air (J/kg*K)
 Cv_AIR = 718.0        # Specific Heat at constant volume (J/kg*K)
 V_DISPLACEMENT = (np.pi / 4.0) * (BORE ** 2) * STROKE
@@ -122,13 +135,20 @@ class ZeroEngineModel:
         
         # Clamp peak cylinder temperature to realistic physical limits (300K - 2800K)
         t_clamped = np.clip(t_raw, 300.0, 2800.0)
-        
+
+        # Physics-informed correction: use the ODE-integrated peak cylinder
+        # temperature (deviation from a nominal ~900K reference) to nudge the
+        # calibrated linear baseline, so the solver's result actually feeds
+        # the reported value rather than being discarded.
+        ode_peak_k = float(np.max(t_clamped))
+        ode_correction_c = (ode_peak_k - 900.0) * 0.01
+
         # Calculate realistic steady-state CHT and EGT estimates:
         # CHT is driven by mean cylinder temperature + heat dissipation (~110°C - 150°C)
-        computed_cht_c = 115.0 + (rpm - 5800.0) * 0.01 + (map_kpa - 101.3) * 0.1
+        computed_cht_c = 115.0 + (rpm - 5800.0) * 0.01 + (map_kpa - 101.3) * 0.1 + ode_correction_c
         
         # EGT is driven by exhaust blowdown temperature (~800°C - 880°C)
-        computed_egt_c = 820.0 + (rpm - 5800.0) * 0.05 + (map_kpa - 101.3) * 0.5
+        computed_egt_c = 820.0 + (rpm - 5800.0) * 0.05 + (map_kpa - 101.3) * 0.5 + ode_correction_c
         
         return {
             "Physics_CHT": round(float(computed_cht_c), 2),
