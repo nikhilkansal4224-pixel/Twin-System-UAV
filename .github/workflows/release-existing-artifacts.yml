@@ -1,0 +1,48 @@
+name: Release Existing Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      run_id:
+        description: 'Workflow Run ID containing the build artifacts (Leave empty for latest run)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish_release:
+    name: Publish Artifacts to GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts from specific run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          path: artifacts
+
+      - name: Consolidate build outputs
+        run: |
+          mkdir release_assets
+          find artifacts -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" \) -exec cp {} release_assets/ \;
+          echo "Files to release:"
+          ls -la release_assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release_assets/*
+          tag_name: ${{ inputs.tag_name }}
+          name: Release ${{ inputs.tag_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
