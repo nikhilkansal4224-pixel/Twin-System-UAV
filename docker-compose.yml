@@ -1,41 +1,87 @@
 version: '3.8'
 
+networks:
+  uav_network:
+    driver: bridge
+
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: uav_zookeeper
+    networks:
+      - uav_network
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
-    depends_on:
-      - zookeeper
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: uav_kafka
+    networks:
+      - uav_network
     ports:
       - "9092:9092"
+    depends_on:
+      - zookeeper
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
-  influxdb:
-    image: influxdb:2.7
+  postgres:
+    image: postgres:15-alpine
+    container_name: uav_postgres
+    networks:
+      - uav_network
     ports:
-      - "8086:8086"
+      - "5432:5432"
     environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
-      - DOCKER_INFLUXDB_INIT_ORG=uav_defense_org
-      - DOCKER_INFLUXDB_INIT_BUCKET=engine_telemetry_bucket
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=uav-twin-secret-token
+      POSTGRES_USER: grafana
+      POSTGRES_PASSWORD: Grafana@123
+      POSTGRES_DB: grafana
 
   grafana:
     image: grafana/grafana:10.0.0
+    container_name: uav_grafana
+    networks:
+      - uav_network
     ports:
       - "3000:3000"
     depends_on:
-      - influxdb
+      - postgres
+
+  digital_twin_worker:
+    build: .
+    container_name: uav_twin_worker
+    networks:
+      - uav_network
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: grafana
+      POSTGRES_PASSWORD: Grafana@123
+      POSTGRES_DB: grafana
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - kafka
+      - postgres
+    restart: always
+
+  control_dashboard:
+    build: .
+    container_name: uav_control_dashboard
+    command: streamlit run src/dashboard.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - uav_network
+    ports:
+      - "8501:8501"
+    environment:
+      POSTGRES_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DATABASE_URL: postgresql://grafana:Grafana%40123@postgres:5432/grafana
+    depends_on:
+      - kafka
+      - postgres

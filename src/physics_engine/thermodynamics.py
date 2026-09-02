@@ -1,197 +1,119 @@
+import math
+import logging
 import os
-import json
-import numpy as np
-from scipy.integrate import solve_ivp
+import psycopg
 
-# =====================================================================
-# 1. ENGINE GEOMETRY & PHYSICAL CONSTANTS (loaded from config/engine_rotax914.json)
-# =====================================================================
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "engine_rotax914.json")
-try:
-    with open(_CONFIG_PATH) as _f:
-        _engine_cfg = json.load(_f)
-    BORE = _engine_cfg["bore_mm"] / 1000.0          # Cylinder Bore diameter (m)
-    STROKE = _engine_cfg["stroke_mm"] / 1000.0       # Piston Stroke length (m)
-    CR = _engine_cfg["compression_ratio"]            # Compression Ratio
-    LHV_FUEL = _engine_cfg["lhv_mj_kg"] * 1e6         # Lower Heating Value of aviation fuel (J/kg)
-except (FileNotFoundError, KeyError) as _e:
-    print(f"[!] Warning: Could not load engine config ({_e}). Using Rotax 914 defaults.")
-    BORE = 0.0795
-    STROKE = 0.061
-    CR = 9.0
-    LHV_FUEL = 44.0e6
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-CRANK_RADIUS = STROKE / 2.0  # Crankshaft radius r (m)
-CON_ROD = 0.112       # Connecting Rod length l (m) — not currently in config, kept as constant
-PISTON_AREA = np.pi * (BORE / 2.0)**2
-DISPLACEMENT = PISTON_AREA * STROKE
-CLEARANCE_VOL = DISPLACEMENT / (CR - 1.0)
-R_AIR = 287.05        # Specific Gas Constant for air (J/kg*K)
-Cv_AIR = 718.0        # Specific Heat at constant volume (J/kg*K)
-V_DISPLACEMENT = (np.pi / 4.0) * (BORE ** 2) * STROKE
-V_CLEARANCE = V_DISPLACEMENT / (CR - 1.0)  # Clearance Volume (V_c)
 
-# =====================================================================
-# 2. CRANK-SLIDER KINEMATICS & WIEBE HEAT RELEASE MODELS
-# =====================================================================
-def get_cylinder_volume(theta):
-    """Calculates instantaneous cylinder volume V(theta) based on crank angle."""
-    lambda_param = CRANK_RADIUS / CON_ROD
-    # Kinematic equation for piston displacement
-    term = 1.0 + np.cos(theta) + (1.0 / lambda_param) * (1.0 - np.sqrt(1.0 - lambda_param**2 * np.sin(theta)**2))
-    s_theta = CRANK_RADIUS * (1.0 - term)
-    v_theta = CLEARANCE_VOL + PISTON_AREA * s_theta
-    return v_theta
-
-def wiebe_heat_release(theta, theta_start=-10.0*np.pi/180.0, delta_theta=60.0*np.pi/180.0, a=5.0, m=2.0):
-    """Calculates instantaneous heat release rate dQ_in/dt using the Wiebe function."""
-    if theta < theta_start or theta > (theta_start + delta_theta):
-        return 0.0
-    
-    y = (theta - theta_start) / delta_theta
-    # Mass fraction burned derivative dx_b/dtheta
-    dxb_dtheta = a * (m + 1.0) / delta_theta * (y**m) * np.exp(-a * (y**(m + 1.0)))
-    return dxb_dtheta
-
-def woschni_heat_transfer(p, t, v_theta, rpm):
-    """Calculates wall heat loss rate dQ_wall/dt using Woschni correlation."""
-    mean_piston_speed = 2.0 * STROKE * (rpm / 60.0)
-    # Woschni heat transfer coefficient h_c
-    p_abs = np.maximum(p, 1e2)  # Prevent negative pressure during ODE step integration
-    t_abs = np.maximum(t, 200.0)
-
-    h_c = 3.2 * (BORE**-0.2) * ((p_abs / 1e5)**0.8) * (t_abs**-0.53) * (mean_piston_speed**0.8)
-    
-    # Instantaneous wall surface area
-    area_wall = 2.0 * PISTON_AREA + np.pi * BORE * (v_theta / PISTON_AREA)
-    t_wall = 420.0  # Nominal cylinder wall temperature (K)
-    
-    dq_wall = h_c * area_wall * (t - t_wall)
-    return dq_wall
-
-# =====================================================================
-# 3. 0D THERMODYNAMIC ODE GOVERNING EQUATION (1st Law)
-# =====================================================================
-def first_law_ode(t, y_state, rpm, fuel_mass_per_cycle):
-    """
-    Solves dT/dt using First Law of Thermodynamics:
-    dU/dt = dQ_in/dt - dQ_wall/dt - P * dV/dt
-    """
-    temp = y_state[0]
-    omega = (2.0 * np.pi * rpm) / 60.0  # Angular velocity (rad/s)
-    theta = omega * t                    # Crank angle (rad)
-    
-    v_curr = get_cylinder_volume(theta)
-    
-    # Calculate mass of trapped gas via Ideal Gas Law (PV = mRT)
-    p_intake = 101325.0  # Nominal ambient intake pressure (Pa)
-    m_gas = (p_intake * v_curr) / (R_AIR * 300.0)
-    
-    # Calculate current cylinder pressure
-    v_curr = np.maximum(v_curr, V_CLEARANCE)  # Prevent zero or negative volume
-    p_curr = (m_gas * R_AIR * temp) / v_curr
-    
-    # 1. Heat Input Rate (dQ_in/dt)
-    dq_in_dtheta = wiebe_heat_release(theta) * (fuel_mass_per_cycle * LHV_FUEL)
-    dq_in_dt = dq_in_dtheta * omega
-    
-    # 2. Wall Loss Rate (dQ_wall/dt)
-    dq_wall_dt = woschni_heat_transfer(p_curr, temp, v_curr, rpm)
-    
-    # 3. Piston Work Rate (dW/dt = P * dV/dt)
-    # Analytical derivative of volume dV/dt
-    dv_dt = PISTON_AREA * CRANK_RADIUS * omega * np.sin(theta)
-    work_rate = p_curr * dv_dt
-    
-    # First Law: m * Cv * dT/dt = dQ_in/dt - dQ_wall/dt - P * dV/dt
-    dtemp_dt = (dq_in_dt - dq_wall_dt - work_rate) / (m_gas * Cv_AIR)
-    
-    return [dtemp_dt]
-
-# =====================================================================
-# 4. 0D BASELINE ENGINE SOLVER & RESIDUAL COMPUTATION
-# =====================================================================
 class ZeroEngineModel:
-    def __init__(self):
-        self.t_span = (0.0, 0.04)  # ~2 engine revolutions at 3000 RPM
+    """
+    Self-Adjusting 0D Thermodynamic Baseline Engine Model for Rotax 914.
+    Uses continuous online learning with statistical error bounding to self-calibrate
+    without manual intervention or startup deadlocks.
+    """
 
-    def compute_physics_baseline(self, rpm, map_kpa):
-        """Solves 0D ODEs to calculate theoretical healthy EGT and CHT values."""
-        t_init = [350.0]  # Initial compression temperature (K)
-        fuel_mass = 0.00003  # ~30mg per stroke
-        
-        # Solve ODE using SciPy solve_ivp
-        sol = solve_ivp(
-            first_law_ode, 
-            self.t_span, 
-            t_init, 
-            args=(rpm, fuel_mass),
-            method='RK45', 
-            max_step=0.0001
-        )
-        
-        # Extract raw integration temperatures in Kelvin
-        t_raw = sol.y[0]
-        
-        # Clamp peak cylinder temperature to realistic physical limits (300K - 2800K)
-        t_clamped = np.clip(t_raw, 300.0, 2800.0)
+    T0_K = 288.15        # Sea level standard temperature (15°C)
+    P0_KPA = 101.325     # Sea level standard pressure (kPa)
+    LAPSE_RATE = 0.0065  # Temperature lapse rate (K/m)
+    G0 = 9.80665
+    R_AIR = 287.05
+    EXPONENT = G0 / (R_AIR * LAPSE_RATE)
 
-        # Physics-informed correction: use the ODE-integrated peak cylinder
-        # temperature (deviation from a nominal ~900K reference) to nudge the
-        # calibrated linear baseline, so the solver's result actually feeds
-        # the reported value rather than being discarded.
-        ode_peak_k = float(np.max(t_clamped))
-        ode_correction_c = (ode_peak_k - 900.0) * 0.01
+    def __init__(self, learning_rate: float = 0.05):
+        # Auto-adjusting bias offsets (start at 0.0 and self-tune)
+        self.cht_bias = 0.0
+        self.egt_bias = 0.0
+        self.lr = learning_rate  # Adaptation tracking rate
 
-        # Calculate realistic steady-state CHT and EGT estimates:
-        # CHT is driven by mean cylinder temperature + heat dissipation (~110°C - 150°C)
-        computed_cht_c = 115.0 + (rpm - 5800.0) * 0.01 + (map_kpa - 101.3) * 0.1 + ode_correction_c
-        
-        # EGT is driven by exhaust blowdown temperature (~800°C - 880°C)
-        computed_egt_c = 820.0 + (rpm - 5800.0) * 0.05 + (map_kpa - 101.3) * 0.5 + ode_correction_c
-        
+    def calculate_isa_atmosphere(self, altitude_m: float) -> dict:
+        alt = max(0.0, min(altitude_m, 11000.0))
+        t_amb_k = self.T0_K - (self.LAPSE_RATE * alt)
+        t_amb_c = t_amb_k - 273.15
+        p_amb_kpa = self.P0_KPA * math.pow((t_amb_k / self.T0_K), self.EXPONENT)
+        density_kg_m3 = (p_amb_kpa * 1000.0) / (self.R_AIR * t_amb_k)
+
         return {
-            "Physics_CHT": round(float(computed_cht_c), 2),
-            "Physics_EGT": round(float(computed_egt_c), 2)
+            "ambient_temp_c": t_amb_c,
+            "ambient_pressure_kpa": p_amb_kpa,
+            "air_density_kg_m3": density_kg_m3,
+            "density_ratio": density_kg_m3 / 1.225
         }
 
-def calculate_residuals(telemetry_data, physics_baseline):
-    """
-    Computes absolute mathematical residuals ΔY = |Actual - Physics Baseline|
-    """
-    residuals = {}
-    if "CHT" in telemetry_data and "Physics_CHT" in physics_baseline:
-        residuals["Delta_CHT"] = round(abs(telemetry_data["CHT"] - physics_baseline["Physics_CHT"]), 2)
-        
-    if "EGT" in telemetry_data and "Physics_EGT" in physics_baseline:
-        residuals["Delta_EGT"] = round(abs(telemetry_data["EGT"] - physics_baseline["Physics_EGT"]), 2)
-        
-    return residuals
+    def compute_physics_baseline(self, rpm: float, map_kpa: float, altitude_m: float = 0.0, **kwargs) -> dict:
+        isa = self.calculate_isa_atmosphere(altitude_m)
+        t_amb = kwargs.get("ambient_temp_c", isa["ambient_temp_c"])
+        rho_ratio = isa["density_ratio"]
 
-# =====================================================================
-# 5. EXECUTION & TEST DRIVE
-# =====================================================================
-if __name__ == "__main__":
-    print("[+] Initializing 0D Thermodynamic Reference Model...")
-    physics_twin = ZeroEngineModel()
-    
-    # Simulated CAN-bus live telemetry
-    live_can_telemetry = {"RPM": 5800.0, "MAP": 101.3, "CHT": 135.5, "EGT": 880.0}
-    
-    print(f"[+] Live CAN Telemetry Ingested: {live_can_telemetry}")
-    
-    # Calculate theoretical healthy baseline
-    baseline = physics_twin.compute_physics_baseline(
-        rpm=live_can_telemetry["RPM"], 
-        map_kpa=live_can_telemetry["MAP"]
-    )
-    print(f"[+] 0D Physics Model Baseline: {baseline}")
-    
-    # Calculate Residual Deltas ΔY
-    deltas = calculate_residuals(live_can_telemetry, baseline)
-    print(f"[+] Computed Residual Deltas (ΔY): {deltas}")
-    
-    # Micro-Anomaly Flag Evaluation
-    if deltas.get("Delta_CHT", 0) > 15.0 or deltas.get("Delta_EGT", 0) > 40.0:
-        print("\n[!] WARNING: Physical Residual Delta Threshold Exceeded!")
-        print("[!] Micro-Anomaly Flagged -> Routing Residuals to PyTorch PINN Pipeline...")
+        norm_rpm = rpm / 5800.0
+        norm_map = map_kpa / 101.325
+
+        # Raw 0D Physics Base Equations
+        cooling_efficiency = max(0.4, rho_ratio)
+        raw_cht = 110.0 + (35.0 * norm_rpm) + (20.0 * norm_map) + (t_amb - 15.0) * 0.4 + (1.0 - cooling_efficiency) * 15.0
+        raw_egt = 720.0 + (110.0 * norm_map) + (30.0 * norm_rpm) - (t_amb - 15.0) * 0.2 + (1.0 - rho_ratio) * 25.0
+
+        # Self-Adjusted Predictions
+        adapted_cht = raw_cht + self.cht_bias
+        adapted_egt = raw_egt + self.egt_bias
+
+        physics_oil = 2.0 + (2.5 * norm_rpm) - (max(0.0, adapted_cht - 130.0) * 0.01)
+
+        return {
+            "physics_cht": round(adapted_cht, 2),
+            "physics_egt": round(adapted_egt, 2),
+            "physics_oil": round(physics_oil, 2),
+            "raw_cht": round(raw_cht, 2),
+            "raw_egt": round(raw_egt, 2),
+            "isa_ambient_temp": round(t_amb, 2),
+            "isa_pressure_kpa": round(isa["ambient_pressure_kpa"], 2),
+            "air_density_kg_m3": round(isa["air_density_kg_m3"], 3)
+        }
+
+    def auto_adjust(self, actual_cht: float, actual_egt: float, physics_baseline: dict):
+        """
+        Self-adjusting online filter. Dynamically tracks baseline shifts 
+        without freezing during initial startup or small operating drifts.
+        """
+        # Current prediction error
+        err_cht = actual_cht - physics_baseline["physics_cht"]
+        err_egt = actual_egt - physics_baseline["physics_egt"]
+
+        # If error is massive (e.g. artificial thermal spike > 60°C), treat as hard anomaly & don't adapt
+        if abs(err_cht) > 60.0 or abs(err_egt) > 80.0:
+            return
+
+        # Smooth continuous online tracking (Exponential Moving Average update)
+        self.cht_bias += self.lr * err_cht
+        self.egt_bias += self.lr * err_egt
+
+    def load_calibration(self, db_url: str = None):
+        url = db_url or os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+        try:
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT cht_bias, egt_bias FROM physics_calibration_state WHERE model_name = 'rotax_914_0d';")
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        self.cht_bias, self.egt_bias = float(row[0]), float(row[1])
+                        logging.info(f"[+] Loaded Self-Adjusted Offsets -> CHT Bias: {self.cht_bias:.2f} | EGT Bias: {self.egt_bias:.2f}")
+        except Exception as e:
+            logging.warning(f"[!] Could not load calibration state ({e}). Self-adjusting from initial state.")
+
+    def save_calibration(self, db_url: str = None):
+        url = db_url or os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+        try:
+            with psycopg.connect(url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO physics_calibration_state (model_name, cht_bias, egt_bias, updated_at)
+                        VALUES ('rotax_914_0d', %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (model_name) DO UPDATE 
+                        SET cht_bias = EXCLUDED.cht_bias, egt_bias = EXCLUDED.egt_bias, updated_at = CURRENT_TIMESTAMP;
+                        """,
+                        (self.cht_bias, self.egt_bias)
+                    )
+                    conn.commit()
+        except Exception as e:
+            logging.error(f"[!] Failed to save calibration state: {e}")

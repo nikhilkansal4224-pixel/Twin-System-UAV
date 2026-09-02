@@ -10,17 +10,19 @@ import time
 import json
 import logging
 from datetime import datetime
+
 # Guarantee project root is in Python path regardless of execution directory
 project_root = os.path.abspath(os.path.dirname(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
 # Import modules from src subpackages
 from src.ingestion.dbc_decoder import DBCDecoder
 from src.physics_engine.thermodynamics import ZeroEngineModel
 from src.physics_engine.residual_calculator import ResidualCalculator
 from src.ai_pipeline.pinn_model import PhysicsInformedNN
-from src.ai_pipeline.lstm_rul import RULPredictorEngine
-from src.orchestration.qlite_writer import SQLiteWriter
+from src.ai_pipeline.lstm_rul import LSTMRULEstimator, RULPredictorEngine
+from src.db.postgres_writer import PostgresWriter
 
 # Configure Logging
 logging.basicConfig(
@@ -31,11 +33,15 @@ logging.basicConfig(
     ]
 )
 
+# Detect and map global edge processing accelerator targets cleanly
+device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+
 class UAVEngineDigitalTwinApp:
     def __init__(self):
         logging.info("=" * 70)
         logging.info("Initializing Indigenous Digital Twin System for UAV Aero-Piston Engines")
         logging.info("Target Application: MALE UAV Ground Control Station (GCS) Edge Deployment")
+        logging.info(f"Active Core Accelerator Target Engine: {device}")
         logging.info("=" * 70)
 
         # 1. Initialize Ingestion Subsystem
@@ -50,25 +56,19 @@ class UAVEngineDigitalTwinApp:
         # 3. Initialize PyTorch AI Subsystem & Load Pre-Trained Weights
         logging.info("[3/5] Loading PyTorch PINN Architecture & LSTM RUL Engine...")
         
-        # A. Initialize PINN Model & Load Saved Weights
-        self.pinn_model = PhysicsInformedNN()
+        # A. Initialize PINN Model & Safe Device-Mapped Weights Loading
+        self.pinn_model = PhysicsInformedNN().to(device)
         pinn_weights_path = os.path.join(project_root, "models", "saved_weights", "pinn_weights.pth")
         if os.path.exists(pinn_weights_path):
-            self.pinn_model.load_state_dict(torch.load(pinn_weights_path))
+            self.pinn_model.load_state_dict(torch.load(pinn_weights_path, map_location=device, weights_only=True))
             logging.info(f"      --> Pre-trained PINN weights loaded from: '{pinn_weights_path}'")
         else:
             logging.info("      --> Warning: No PINN weights found. Running with initial weights.")
         self.pinn_model.eval()
 
-        # B. Initialize LSTM RUL Engine & Load Saved Weights
-        self.rul_engine = RULPredictorEngine(nominal_max_life_hours=1200.0, sequence_length=10)
+        # B. Initialize LSTM RUL Engine & Safe Device-Mapped Weights Loading
         lstm_weights_path = os.path.join(project_root, "models", "saved_weights", "lstm_rul_weights.pth")
-        if os.path.exists(lstm_weights_path):
-            self.rul_engine.model.load_state_dict(torch.load(lstm_weights_path))
-            logging.info(f"      --> Pre-trained LSTM RUL weights loaded from: '{lstm_weights_path}'")
-        else:
-            logging.info("      --> Warning: No LSTM weights found. Running with initial weights.")
-        self.rul_engine.model.eval()
+        self.rul_engine = RULPredictorEngine(nominal_max_life_hours=1200.0, sequence_length=10, weights_path=lstm_weights_path)
 
         # 4. Initialize Database Persistence Layer
         logging.info("[4/5] Connecting to SQLite Database...")
@@ -95,14 +95,21 @@ class UAVEngineDigitalTwinApp:
         residual_results = self.residual_calc.compute_residuals(decoded_signals, physics_baseline)
         residuals = residual_results.get("residual_deltas", residual_results)
 
-        # Step C.5: Run PINN degradation severity scoring on the residual vector
-        pinn_vec = residual_results.get(
-            "pinn_input_vector",
-            [residuals.get("Delta_CHT", 0.0), residuals.get("Delta_EGT", 0.0), 0.0, 0.0]
-        )
+        # Step C.5: Align and assign your full 4-feature tensor array directly on device
+        pinn_vec = [
+            float(residuals.get("Delta_CHT", 0.0)),
+            float(residuals.get("Delta_EGT", 0.0)),
+            float(residuals.get("Delta_Oil_P", 0.0)),
+            float(residuals.get("Delta_MAP", 0.0))
+        ]
+        
+        input_tensor = torch.tensor([pinn_vec], dtype=torch.float32, device=device)
+        
         with torch.no_grad():
-            pinn_out = self.pinn_model(torch.tensor([pinn_vec], dtype=torch.float32))
-        pinn_severity_score = round(float(pinn_out[0, 2].item()), 4)  # 3rd output = severity score
+            pinn_out = self.pinn_model(input_tensor)
+        
+        # Unpack indices cleanly depending on output dim dimensions
+        pinn_severity_score = round(float(pinn_out[0, 2].item()), 4) if pinn_out.shape[1] >= 3 else round(float(pinn_out[0, 0].item()), 4)
 
         # Step D: Update sequence buffer & estimate Remaining Useful Life (RUL)
         self.rul_engine.add_telemetry_step(residuals)
@@ -150,7 +157,7 @@ class UAVEngineDigitalTwinApp:
                 oil_raw = int((4.5 + random.uniform(-0.05, 0.05)) / 0.01)
                 payload_100 = struct.pack("<HHH", rpm_raw, map_raw, oil_raw) + b'\x00\x00'
 
-                state_100 = self.process_telemetry_frame(0x100, payload_100)
+                self.process_telemetry_frame(0x100, payload_100)
 
                 # 2. Simulate Frame 0x200 (CHT, EGT) with injected thermal drift at step 10
                 cht_val = 115.0 if iteration < 10 else (115.0 + (iteration - 9) * 4.5)  # Inject thermal drift
@@ -162,7 +169,6 @@ class UAVEngineDigitalTwinApp:
 
                 state_200 = self.process_telemetry_frame(0x200, payload_200)
 
-
                 if state_200:
                     status_str = f"HEALTH: {state_200['health_index_pct']}% | RUL: {state_200['rul_hours']} hrs | STATUS: {state_200['maintenance_urgency']}"
                     anomaly_str = " [!] ANOMALY FLAGGED" if state_200['anomaly_flagged'] else " [OK] NOMINAL"
@@ -173,15 +179,10 @@ class UAVEngineDigitalTwinApp:
                 time.sleep(tick_interval)
 
             logging.info("-" * 75)
-            logging.info("Live Execution Loop Completed Successfully.")
-
         except KeyboardInterrupt:
-            logging.info("\nExecution Stopped by User.")
-
-        finally:
-            self.sqlite_writer.close()
-
+            logging.info("[!] Live simulation halted gracefully by Ground Control operator commands.")
 
 if __name__ == "__main__":
+    # Boot application engine instance
     app = UAVEngineDigitalTwinApp()
-    app.run_live_simulation(loop_iterations=15, tick_interval=0.3)
+    app.run_live_simulation(loop_iterations=20, tick_interval=0.2)

@@ -1,20 +1,25 @@
+import os
 import struct
+import logging
 import cantools  # Install via: pip install cantools python-can
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
 class DBCDecoder:
-    def __init__(self, dbc_file_path=None):
+    def __init__(self, dbc_file_path: str = None):
         """
         Initializes the CAN DBC database parser.
         If a .DBC file path is provided, it loads via cantools.
         Otherwise, it falls back to hardcoded CAN signal mapping configurations.
         """
         self.db = None
-        if dbc_file_path:
+        if dbc_file_path and os.path.exists(dbc_file_path):
             try:
                 self.db = cantools.database.load_file(dbc_file_path)
-                print(f"[+] Successfully loaded CAN Database: {dbc_file_path}")
+                logging.info(f"[+] Successfully loaded CAN Database: {dbc_file_path}")
             except Exception as e:
-                print(f"[!] Warning: Failed to load .DBC file ({e}). Using inline dictionary fallback.")
+                logging.warning(f"[!] Failed to load .DBC file ({e}). Using inline dictionary fallback.")
 
         # Hardcoded fallback signal configuration mapping
         self.fallback_config = {
@@ -44,7 +49,7 @@ class DBCDecoder:
                 decoded_signals = message.decode(payload_bytes)
                 return decoded_signals
             except Exception as e:
-                print(f"[!] DBC Decoding Error for ID 0x{can_id:03X}: {e}")
+                logging.error(f"[!] DBC Decoding Error for ID 0x{can_id:03X}: {e}")
                 return {}
 
         # Option 2: Fallback manual bit unpacking & linear scaling
@@ -78,7 +83,6 @@ if __name__ == "__main__":
     decoder = DBCDecoder()  # Initialize decoder (runs fallback config)
 
     # 1. Simulate Raw Hex Payload for ID 0x100 (RPM = 5800, MAP = 101.3 kPa, Oil_P = 4.5 bar)
-    # RPM: 5800 -> 0x16A8 | MAP: 1013 (raw) -> 0x03F5 | Oil_P: 450 (raw) -> 0x01C2
     raw_payload_100 = struct.pack("<HHH", 5800, 1013, 450) + b'\x00\x00'
     hex_str_100 = ' '.join(f'{b:02X}' for b in raw_payload_100)
 
@@ -88,7 +92,6 @@ if __name__ == "__main__":
     print(f"Decoded Telemetry: {decoded_100}")
 
     # 2. Simulate Raw Hex Payload for ID 0x200 (CHT = 115.0 °C, EGT = 820.0 °C)
-    # CHT: (115 - (-40))/0.1 = 1550 (raw) -> 0x060E | EGT: 820/0.1 = 8200 (raw) -> 0x2008
     raw_payload_200 = struct.pack("<HH", 1550, 8200) + b'\x00\x00\x00\x00'
     hex_str_200 = ' '.join(f'{b:02X}' for b in raw_payload_200)
 

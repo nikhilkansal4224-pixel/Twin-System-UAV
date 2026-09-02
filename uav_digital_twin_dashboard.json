@@ -1,0 +1,313 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Engine Health Index (%)",
+      "type": "gauge",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", health_index FROM twin_states ORDER BY created_at DESC LIMIT 1;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 80 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Remaining Useful Life (RUL)",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", rul_hours AS \"RUL (Hours)\" FROM twin_states ORDER BY created_at DESC LIMIT 1;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 200 },
+              { "color": "green", "value": 800 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "title": "Maintenance Status & PINN Anomaly Alert",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", maintenance_urgency AS \"Status\" FROM twin_states ORDER BY created_at DESC LIMIT 1;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "value" },
+          "mappings": [
+            { "type": "value", "options": { "NOMINAL": { "color": "green", "index": 0 } } },
+            { "type": "value", "options": { "WARNING": { "color": "yellow", "index": 1 } } },
+            { "type": "value", "options": { "CRITICAL": { "color": "red", "index": 2 } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 4,
+      "title": "Cylinder Head Temperature (CHT): Telemetry vs. 0D Physics Engine",
+      "type": "timeseries",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", cht_actual AS \"CHT Actual (°C)\", cht_physics AS \"CHT Physics Baseline (°C)\" FROM twin_states WHERE $__timeFilter(created_at) ORDER BY created_at ASC;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "CHT Physics Baseline (°C)" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "fixedColor": "#FFC107", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "CHT Actual (°C)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 5,
+      "title": "Exhaust Gas Temperature (EGT): Telemetry vs. 0D Physics Engine",
+      "type": "timeseries",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", egt_actual AS \"EGT Actual (°C)\", egt_physics AS \"EGT Physics Baseline (°C)\" FROM twin_states WHERE $__timeFilter(created_at) ORDER BY created_at ASC;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "EGT Physics Baseline (°C)" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "EGT Actual (°C)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "id": 6,
+      "title": "Thermodynamic Residual Deltas (ΔY = Actual - Physics)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "postgres",
+        "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "df55d49e-7909-4ceb-bbfd-fc7d3f3e366d"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", delta_cht AS \"ΔCHT (°C)\", delta_egt AS \"ΔEGT (°C)\", delta_oil AS \"ΔOil Pressure (bar)\" FROM twin_states WHERE $__timeFilter(created_at) ORDER BY created_at ASC;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["uav", "digital-twin", "pinn", "lstm"],
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["1s", "5s", "10s"]
+  },
+  "title": "UAV Engine Edge Digital Twin Dashboard",
+  "uid": "uav-engine-twin-v1"
+}
