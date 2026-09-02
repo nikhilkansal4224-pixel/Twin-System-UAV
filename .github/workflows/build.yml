@@ -1,0 +1,95 @@
+name: Build Cross-Platform Desktop Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-latest
+            platform: linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 PyQt6-WebEngine pyinstaller Pillow
+
+      - name: Generate Icon Assets
+        run: python generate_assets.py
+
+      # --- MACOS BUILD (.dmg) ---
+      - name: Build macOS DMG
+        if: matrix.platform == 'macos'
+        run: |
+          brew install create-dmg
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.icns" --add-data "assets:assets" --add-data "src:src" app_desktop.py
+          mkdir -p dist/dmg_output
+          create-dmg --volname "UAV Digital Twin" --volicon "assets/app_icon.icns" --window-pos 200 120 --window-size 600 400 --icon-size 100 --icon "UAV_Digital_Twin.app" 175 190 --hide-extension "UAV_Digital_Twin.app" --app-drop-link 425 190 "dist/dmg_output/UAV_Digital_Twin_v1.0.dmg" "dist/UAV_Digital_Twin.app"
+
+      # --- WINDOWS BUILD (.exe) ---
+      - name: Build Windows Executable
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.ico" --add-data "assets;assets" --add-data "src;src" app_desktop.py
+          @"
+          Name `"UAV Digital Twin`"
+          OutFile `"dist\UAV_Digital_Twin_Setup_v1.0.exe`"
+          InstallDir `"`$PROGRAMFILES64\UAV_Digital_Twin`"
+          RequestExecutionLevel admin
+          Page directory
+          Page instfiles
+          Section `"Main`"
+              SetOutPath `"`$INSTDIR`"
+              File /r `"dist\UAV_Digital_Twin\*.*`"
+              CreateShortCut `"`$DESKTOP\UAV Digital Twin.lnk`" `"`$INSTDIR\UAV_Digital_Twin.exe`"
+          SectionEnd
+          "@ | Out-File -Encoding ascii installer.nsi
+          & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
+
+      # --- LINUX BUILD (.AppImage) ---
+      - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
+          wget https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
+          cp -r dist/UAV_Digital_Twin/* dist/AppDir/usr/bin/
+          cp assets/app_icon.png dist/AppDir/usr/share/icons/hicolor/512x512/apps/uav_digital_twin.png
+          cp assets/app_icon.png dist/AppDir/uav_digital_twin.png
+          echo -e "[Desktop Entry]\nType=Application\nName=UAV Digital Twin\nExec=UAV_Digital_Twin\nIcon=uav_digital_twin\nCategories=Utility;" > dist/AppDir/uav_digital_twin.desktop
+          echo -e '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/usr/bin/UAV_Digital_Twin" "$@"' > dist/AppDir/AppRun
+          chmod +x dist/AppDir/AppRun
+          ./appimagetool-x86_64.AppImage dist/AppDir dist/UAV_Digital_Twin_v1.0-x86_64.AppImage
+
+      # --- UPLOAD ARTIFACTS ---
+      - name: Upload Output Installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-installer
+          path: |
+            dist/dmg_output/*.dmg
+            dist/*.exe
+            dist/*.AppImage
