@@ -36,7 +36,7 @@ jobs:
           pip install PyQt6 PyQt6-WebEngine pyinstaller Pillow
 
       - name: Generate Icon Assets
-        run: python generate_assets.py
+        run: python assets.py
 
       # --- MACOS BUILD (.dmg) ---
       - name: Build macOS DMG
