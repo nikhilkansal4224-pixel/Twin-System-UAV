@@ -1,8 +1,9 @@
 import os
 import sqlite3
 
-# Define absolute target database path
-DB_DIR = "/Users/nikhil/Documents/pro/uav-engine-digital-twin/data"
+# Resolve path relative to this file's location (matches src/orchestration/qlite_writer.py)
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+DB_DIR = os.path.join(PROJECT_ROOT, "data")
 DB_PATH = os.path.join(DB_DIR, "engine_telemetry.db")
 
 def init_sqlite_database():
