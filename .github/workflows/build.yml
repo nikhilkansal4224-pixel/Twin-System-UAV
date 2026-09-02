@@ -89,9 +89,9 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
           
-          # Fetch the latest continuous release binary from probonopd/go-appimage
-          curl -s https://api.github.com/repos/probonopd/go-appimage/releases/tags/continuous | grep "browser_download_url.*appimagetool-.*-x86_64.AppImage" | head -n 1 | cut -d '"' -f 4 | xargs -I {} wget -q {} -O appimagetool.AppImage
-          
+          # Fetch the active continuous release URL dynamically from GitHub API
+          APPIMAGE_URL=$(curl -s https://api.github.com/repos/probonopd/go-appimage/releases/tags/continuous | grep "browser_download_url.*appimagetool-.*-x86_64.AppImage" | head -n 1 | cut -d '"' -f 4)
+          wget "$APPIMAGE_URL" -O appimagetool.AppImage
           chmod +x appimagetool.AppImage
           
           mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
@@ -145,80 +145,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # --- MACOS BUILD (.dmg) ---
-      - name: Build macOS DMG
-        if: matrix.platform == 'macos'
-        run: |
-          brew install create-dmg
-          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.icns" --add-data "assets:assets" --add-data "src:src" app_desktop.py
-          mkdir -p dist/dmg_output
-          create-dmg --volname "UAV Digital Twin" --volicon "assets/app_icon.icns" --window-pos 200 120 --window-size 600 400 --icon-size 100 --icon "UAV_Digital_Twin.app" 175 190 --hide-extension "UAV_Digital_Twin.app" --app-drop-link 425 190 "dist/dmg_output/UAV_Digital_Twin_v1.0.dmg" "dist/UAV_Digital_Twin.app"
-
-      # --- WINDOWS BUILD (.exe) ---
-      - name: Install NSIS Compiler
-        if: matrix.platform == 'windows'
-        uses: negrutiu/nsis-install@v2
-
-      - name: Build Windows Executable & Installer
-        if: matrix.platform == 'windows'
-        shell: powershell
-        run: |
-          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.ico" --add-data "assets;assets" --add-data "src;src" app_desktop.py
-          @"
-          Name `"UAV Digital Twin`"
-          OutFile `"dist\UAV_Digital_Twin_Setup_v1.0.exe`"
-          InstallDir `"`$PROGRAMFILES64\UAV_Digital_Twin`"
-          RequestExecutionLevel admin
-
-          Page directory
-          Page instfiles
-          UninstPage uninstConfirm
-          UninstPage instfiles
-
-          Section `"MainSection`" SEC01
-              SetOutPath `"`$INSTDIR`"
-              File /r `"dist\UAV_Digital_Twin\*.*`"
-              CreateShortCut `"`$DESKTOP\UAV Digital Twin.lnk`" `"`$INSTDIR\UAV_Digital_Twin.exe`" `"`" `"`$INSTDIR\assets\app_icon.ico`"
-              WriteUninstaller `"`$INSTDIR\Uninstall.exe`"
-          SectionEnd
-
-          Section `"Uninstall`"
-              Delete `"`$DESKTOP\UAV Digital Twin.lnk`"
-              RMDir /r `"`$INSTDIR`"
-          SectionEnd
-          "@ | Out-File -Encoding ascii installer.nsi
-          
-          makensis installer.nsi
-
-      # --- LINUX BUILD (.AppImage) ---
-      - name: Build Linux AppImage
-        if: matrix.platform == 'linux'
-        run: |
-          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
-          
-          # Fetch latest release download URL dynamically via GitHub API
-          APPIMAGE_URL=$(curl -s https://api.github.com/repos/probonopd/go-appimage/releases/tags/continuous | grep "browser_download_url.*appimagetool-.*-x86_64.AppImage" | head -n 1 | cut -d '"' -f 4)
-          wget "$APPIMAGE_URL" -O appimagetool.AppImage
-          chmod +x appimagetool.AppImage
-          
-          mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
-          cp -r dist/UAV_Digital_Twin/* dist/AppDir/usr/bin/
-          cp assets/app_icon.png dist/AppDir/usr/share/icons/hicolor/512x512/apps/uav_digital_twin.png
-          cp assets/app_icon.png dist/AppDir/uav_digital_twin.png
-          
-          echo -e "[Desktop Entry]\nType=Application\nName=UAV Digital Twin\nExec=UAV_Digital_Twin\nIcon=uav_digital_twin\nCategories=Utility;" > dist/AppDir/uav_digital_twin.desktop
-          echo -e '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/usr/bin/UAV_Digital_Twin" "$@"' > dist/AppDir/AppRun
-          chmod +x dist/AppDir/AppRun
-          
-          ARCH=x86_64 ./appimagetool.AppImage dist/AppDir/
-          mv UAV_Digital_Twin-*.AppImage dist/UAV_Digital_Twin_v1.0-x86_64.AppImage || true
-
-      # --- UPLOAD ARTIFACTS ---
-      - name: Upload Output Installers
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}-installer
-          path: |
-            dist/dmg_output/*.dmg
-            dist/*.exe
-            dist/*.AppImage
