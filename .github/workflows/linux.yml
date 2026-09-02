@@ -44,8 +44,8 @@ jobs:
             libxcb-image0 \
             libxcb-keysyms1 \
             libxcb-render-util0 \
-            libgl1-mesa-glx \
-            libegl1-mesa \
+            libgl1 \
+            libegl1 \
             fuse
 
       - name: Install Python dependencies
