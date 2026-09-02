@@ -1,4 +1,4 @@
-name: Build Linux Desktop Installer
+name: Build Cross-Platform Desktop Installers
 
 on:
   push:
@@ -11,8 +11,18 @@ permissions:
 
 jobs:
   build:
-    name: Build on Ubuntu
-    runs-on: ubuntu-latest
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-latest
+            platform: linux
 
     steps:
       - name: Checkout repository
@@ -23,7 +33,9 @@ jobs:
         with:
           python-version: '3.10'
 
+      # --- LINUX DEPENDENCIES ---
       - name: Install Linux System Dependencies
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -41,13 +53,73 @@ jobs:
           python -m pip install --upgrade pip
           pip install PyQt6 PyQt6-WebEngine pyinstaller Pillow
 
+      # --- MACOS BUILD (.dmg) ---
+      - name: Build macOS DMG
+        if: matrix.platform == 'macos'
+        run: |
+          brew install create-dmg
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.icns" --add-data "assets:assets" --add-data "src:src" app_desktop.py
+          mkdir -p dist/dmg_output
+          
+          VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          create-dmg \
+            --volname "UAV Digital Twin" \
+            --volicon "assets/app_icon.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "UAV_Digital_Twin.app" 175 190 \
+            --hide-extension "UAV_Digital_Twin.app" \
+            --app-drop-link 425 190 \
+            "dist/dmg_output/UAV_Digital_Twin_${VERSION}.dmg" \
+            "dist/UAV_Digital_Twin.app"
+
+      # --- WINDOWS BUILD (.exe) ---
+      - name: Install NSIS Compiler
+        if: matrix.platform == 'windows'
+        uses: negrutiu/nsis-install@v2
+
+      - name: Build Windows Executable & Installer
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: |
+          $VERSION = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.0" }
+          pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.ico" --add-data "assets;assets" --add-data "src;src" app_desktop.py
+          
+          $nsisScript = @"
+          Name "UAV Digital Twin"
+          OutFile "dist\UAV_Digital_Twin_Setup_${VERSION}.exe"
+          InstallDir "`$PROGRAMFILES64\UAV_Digital_Twin"
+          RequestExecutionLevel admin
+
+          Page directory
+          Page instfiles
+          UninstPage uninstConfirm
+          UninstPage instfiles
+
+          Section "MainSection" SEC01
+              SetOutPath "`$INSTDIR"
+              File /r "dist\UAV_Digital_Twin\*.*"
+              CreateShortCut "`$DESKTOP\UAV Digital Twin.lnk" "`$INSTDIR\UAV_Digital_Twin.exe" "" "`$INSTDIR\assets\app_icon.ico"
+              WriteUninstaller "`$INSTDIR\Uninstall.exe"
+          SectionEnd
+
+          Section "Uninstall"
+              Delete "`$DESKTOP\UAV Digital Twin.lnk"
+              RMDir /r "`$INSTDIR"
+          SectionEnd
+          "@
+          Set-Content -Path "installer.nsi" -Value $nsisScript -Encoding UTF8
+          makensis installer.nsi
+
+      # --- LINUX BUILD (.AppImage) ---
       - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
         run: |
           pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
           
           VERSION=${GITHUB_REF_NAME:-v1.0.0}
           
-          # Fetch stable appimagetool release
           wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool.AppImage
           chmod +x appimagetool.AppImage
           
@@ -60,15 +132,18 @@ jobs:
           echo -e '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/usr/bin/UAV_Digital_Twin" "$@"' > dist/AppDir/AppRun
           chmod +x dist/AppDir/AppRun
           
-          # Extract binary to bypass FUSE restriction in runner
           ./appimagetool.AppImage --appimage-extract
           ARCH=x86_64 ./squashfs-root/AppRun dist/AppDir/ "dist/UAV_Digital_Twin_${VERSION}-x86_64.AppImage"
 
-      - name: Upload Linux Artifact
+      # --- UPLOAD INDIVIDUAL ARTIFACTS ---
+      - name: Upload Output Installers
         uses: actions/upload-artifact@v4
         with:
-          name: linux-installer
-          path: dist/*.AppImage
+          name: ${{ matrix.platform }}-installer
+          path: |
+            dist/dmg_output/*.dmg
+            dist/*.exe
+            dist/*.AppImage
 
   release:
     name: Publish GitHub Release
@@ -79,16 +154,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download build artifact
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: linux-installer
-          path: release_assets
+          path: artifacts
+
+      - name: Consolidate installers into release directory
+        run: |
+          mkdir release_assets
+          find artifacts -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" \) -exec cp {} release_assets/ \;
+          ls -la release_assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release_assets/*.AppImage
+          files: release_assets/*
           draft: false
           prerelease: false
           generate_release_notes: true
