@@ -86,7 +86,9 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --windowed --name "UAV_Digital_Twin" --icon "assets/app_icon.png" --add-data "assets:assets" --add-data "src:src" app_desktop.py
           
-          wget https://github.com/probonopd/go-appimage/releases/download/continuous/appimagetool-832-x86_64.AppImage -O appimagetool.AppImage
+          # Fetch latest release download URL dynamically via GitHub API
+          APPIMAGE_URL=$(curl -s https://api.github.com/repos/probonopd/go-appimage/releases/tags/continuous | grep "browser_download_url.*appimagetool-.*-x86_64.AppImage" | head -n 1 | cut -d '"' -f 4)
+          wget "$APPIMAGE_URL" -O appimagetool.AppImage
           chmod +x appimagetool.AppImage
           
           mkdir -p dist/AppDir/usr/bin dist/AppDir/usr/share/icons/hicolor/512x512/apps
