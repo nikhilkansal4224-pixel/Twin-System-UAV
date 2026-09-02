@@ -47,7 +47,7 @@ jobs:
       # --- WINDOWS BUILD (.exe) ---
       - name: Install NSIS Compiler
         if: matrix.platform == 'windows'
-        uses: joncloud/action-nsis@v1
+        uses: negrutiu/nsis-install@v2
 
       - name: Build Windows Executable & Installer
         if: matrix.platform == 'windows'
@@ -78,7 +78,6 @@ jobs:
           SectionEnd
           "@ | Out-File -Encoding ascii installer.nsi
           
-          # Run makensis directly from PATH
           makensis installer.nsi
 
       # --- LINUX BUILD (.AppImage) ---
