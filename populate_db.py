@@ -3,8 +3,9 @@ import sqlite3
 import time
 import random
 
-# Absolute target database path
-DB_DIR = "/Users/nikhil/Documents/pro/uav-engine-digital-twin/data"
+# Resolve path relative to this file's location (matches src/orchestration/qlite_writer.py)
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+DB_DIR = os.path.join(PROJECT_ROOT, "data")
 DB_PATH = os.path.join(DB_DIR, "engine_telemetry.db")
 
 def populate_sample_rows(num_records=50):
