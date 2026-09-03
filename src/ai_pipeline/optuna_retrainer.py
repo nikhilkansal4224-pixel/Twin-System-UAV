@@ -14,9 +14,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 # Database Connection Info
+# src/ai_pipeline/retrain_pipeline.py
+
 DB_URL = os.getenv(
     "DATABASE_URL", 
-    f"postgresql://{os.getenv('POSTGRES_USER', 'grafana')}:{os.getenv('POSTGRES_PASSWORD', 'Grafana@123')}@{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'grafana')}"
+    "postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry"
 )
 
 # PINN Architecture (Parameterized for Tuning)

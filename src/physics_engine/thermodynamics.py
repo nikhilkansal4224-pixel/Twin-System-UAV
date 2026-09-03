@@ -88,7 +88,7 @@ class ZeroEngineModel:
         self.egt_bias += self.lr * err_egt
 
     def load_calibration(self, db_url: str = None):
-        url = db_url or os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+        url = db_url or os.getenv("DATABASE_URL", "postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
         try:
             with psycopg.connect(url) as conn:
                 with conn.cursor() as cur:
@@ -101,7 +101,7 @@ class ZeroEngineModel:
             logging.warning(f"[!] Could not load calibration state ({e}). Self-adjusting from initial state.")
 
     def save_calibration(self, db_url: str = None):
-        url = db_url or os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+        url = db_url or os.getenv("DATABASE_URL", "postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
         try:
             with psycopg.connect(url) as conn:
                 with conn.cursor() as cur:

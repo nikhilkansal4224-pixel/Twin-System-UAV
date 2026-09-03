@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 
 DB_URL = os.getenv(
     "DATABASE_URL", 
-    f"postgresql://{os.getenv('POSTGRES_USER', 'grafana')}:{os.getenv('POSTGRES_PASSWORD', 'Grafana@123')}@{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'grafana')}"
+    "postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry"
 )
 
 # ---------------------------------------------------------------------------
@@ -47,14 +47,20 @@ class RetrainingWorker:
         self.best_batch_size = 32
 
     def fetch_training_data(self) -> pd.DataFrame:
+        # Schema aligned with uav_aero_engine_metrics table definition
         query = """
         SELECT 
-            actual_cht, actual_egt, actual_oil,
-            physics_cht, physics_egt,
-            residual_cht, residual_egt, residual_oil,
-            health_index_pct
+            COALESCE(actual_cht, 0.0) AS actual_cht, 
+            COALESCE(actual_egt, 0.0) AS actual_egt, 
+            COALESCE(actual_oil_pressure, 0.0) AS actual_oil,
+            COALESCE(physics_cht, 0.0) AS physics_cht, 
+            COALESCE(physics_egt, 0.0) AS physics_egt,
+            COALESCE(residual_cht, 0.0) AS residual_cht, 
+            COALESCE(residual_egt, 0.0) AS residual_egt, 
+            (COALESCE(actual_oil_pressure, 0.0) - COALESCE(physics_oil_pressure, 0.0)) AS residual_oil,
+            COALESCE(health_index_pct, 100.0) AS health_index_pct
         FROM uav_aero_engine_metrics
-        ORDER BY created_at DESC
+        ORDER BY id DESC
         LIMIT 50000;
         """
         try:
@@ -118,7 +124,7 @@ class RetrainingWorker:
 
 
 if __name__ == "__main__":
-    worker = RetrainingWorker(min_samples_required=100)
+    worker = RetrainingWorker(min_samples_required=10)
     data = worker.fetch_training_data()
     if not data.empty:
         worker.retrain_and_promote(data, epochs=25)
