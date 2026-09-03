@@ -12,17 +12,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# 1. Resolve project paths dynamically FIRST
-BASE_DIR = Path(__file__).resolve().parent.parent
+# 1. Resolve project root cleanly regardless of file location
+CURRENT_DIR = Path(__file__).resolve().parent
+BASE_DIR = CURRENT_DIR.parent if CURRENT_DIR.name == "src" else CURRENT_DIR
+
 CONSUMER_PATH = BASE_DIR / "src" / "streaming" / "kafka_consumer.py"
 PRODUCER_PATH = BASE_DIR / "src" / "can_bus" / "telemetry_producer.py"
 RETRAIN_PATH = BASE_DIR / "src" / "ai_pipeline" / "retrain_pipeline.py"
+REPORT_PATH = BASE_DIR / "src" / "reports" / "generate_report.py"
 
-# 2. Configure Environment Dictionary with explicit PYTHONPATH
+# 2. Configure Environment Dictionary with explicit PYTHONPATH pointing to BASE_DIR
 ENV = os.environ.copy()
 ENV["PYTHONPATH"] = str(BASE_DIR)
 
-DB_URL = os.getenv("DATABASE_URL","postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
+DB_URL = os.getenv("DATABASE_URL", "postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
 
 # Process state handling
 if "consumer_proc" not in st.session_state:
@@ -58,7 +61,6 @@ with col_proc1:
             if not CONSUMER_PATH.exists():
                 st.error(f"File not found: {CONSUMER_PATH}")
             else:
-                # Spawn process cleanly inside the button click handler ONLY
                 st.session_state.consumer_proc = subprocess.Popen(
                     [sys.executable, str(CONSUMER_PATH)],
                     cwd=str(BASE_DIR),
@@ -103,7 +105,8 @@ def render_live_telemetry():
     try:
         df = pd.read_sql_query(
             """
-            SELECT created_at, 
+            SELECT id,
+                   timestamp, 
                    COALESCE(actual_cht, 0.0) as actual_cht, 
                    COALESCE(physics_cht, 0.0) as physics_cht, 
                    COALESCE(residual_cht, 0.0) as residual_cht, 
@@ -115,16 +118,14 @@ def render_live_telemetry():
                    COALESCE(maintenance_urgency, 'NOMINAL') as maintenance_urgency, 
                    COALESCE(altitude_m, 0.0) as altitude_m 
             FROM uav_aero_engine_metrics 
-            ORDER BY created_at DESC LIMIT 60;
+            ORDER BY id DESC LIMIT 60;
             """,
             con=DB_URL
         )
         if not df.empty:
-            df["created_at"] = pd.to_datetime(df["created_at"])
-            df = df.iloc[::-1]
+            df = df.iloc[::-1]  # Chronological order for plots
             latest = df.iloc[-1]
             
-            # Safe numeric conversion helper
             def safe_float(val, default=0.0):
                 try:
                     return float(val) if pd.notnull(val) else default
@@ -150,7 +151,6 @@ def render_live_telemetry():
                 st.markdown("**Thermal Tracking (Actual vs Physics CHT °C)**")
                 st.line_chart(
                     df, 
-                    x="created_at", 
                     y=["actual_cht", "physics_cht"], 
                     height=250
                 )
@@ -159,7 +159,6 @@ def render_live_telemetry():
                 st.markdown("**Flight Profile (Altitude m)**")
                 st.area_chart(
                     df, 
-                    x="created_at", 
                     y="altitude_m", 
                     height=250, 
                     color="#3b82f6"
@@ -172,34 +171,48 @@ def render_live_telemetry():
 
 render_live_telemetry()
 
+st.divider()
+
 # ==============================================================================
 # SECTION 3: MLOPS & RETRAINING
 # ==============================================================================
-st.subheader("🤖 MLOps Model Retraining")
-# Add under SECTION 3 in src/dashboard.py
-st.subheader("📄 Automated Post-Flight Diagnostic Reports")
+st.subheader("🤖 MLOps Model Management & Diagnostic Reports")
 
-if st.button("📄 Generate PDF Post-Flight Diagnostic Summary", use_container_width=True):
-    with st.spinner("Generating PDF report from PostgreSQL telemetry..."):
-        try:
-            REPORT_SCRIPT = BASE_DIR / "src" / "reports" / "generate_report.py"
-            result = subprocess.run(
-                [sys.executable, str(REPORT_SCRIPT)],
-                capture_output=True, text=True, check=True, cwd=str(BASE_DIR), env=ENV
-            )
-            st.success("PDF Report generated successfully in 'reports/' folder!")
-            st.code(result.stdout, language="text")
-        except Exception as e:
-            st.error(f"Report generation error: {e}")
+col_ml1, col_ml2 = st.columns(2)
 
-if st.button("🔄 Trigger PINN Model Retraining Pipeline", use_container_width=True):
-    with st.spinner("Retraining PINN model on Postgres metrics..."):
-        try:
-            result = subprocess.run(
-                [sys.executable, str(RETRAIN_PATH)],
-                capture_output=True, text=True, check=True, cwd=str(BASE_DIR), env=ENV
-            )
-            st.success("Model retrained successfully and weights hot-reloaded!")
-            st.code(result.stdout, language="text")
-        except Exception as e:
-            st.error(f"Retraining error: {e}")
+with col_ml1:
+    st.markdown("### 🔄 PINN Retraining Loop")
+    if st.button("🔄 Trigger PINN Model Retraining Pipeline", use_container_width=True, type="primary"):
+        if not RETRAIN_PATH.exists():
+            st.error(f"Retrain script not found: {RETRAIN_PATH}")
+        else:
+            try:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "src.ai_pipeline.retrain_pipeline"],
+                    cwd=str(BASE_DIR),
+                    env=ENV,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                st.success(f"PINN retraining worker launched in background (PID: {proc.pid})")
+                st.toast("Retraining initiated successfully!", icon="🚀")
+            except Exception as e:
+                st.error(f"Retraining execution error: {e}")
+
+with col_ml2:
+    st.markdown("### 📄 Diagnostic Reporting")
+    if st.button("📄 Generate PDF Post-Flight Summary", use_container_width=True):
+        if not REPORT_PATH.exists():
+            st.error(f"Report script not found: {REPORT_PATH}")
+        else:
+            with st.spinner("Generating diagnostic PDF summary from database records..."):
+                try:
+                    result = subprocess.run(
+                        [sys.executable, str(REPORT_PATH)],
+                        capture_output=True, text=True, check=True, cwd=str(BASE_DIR), env=ENV
+                    )
+                    st.success("PDF Diagnostic Summary exported successfully!")
+                    st.code(result.stdout, language="text")
+                except Exception as e:
+                    st.error(f"Report generation error: {e}")

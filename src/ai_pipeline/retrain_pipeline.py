@@ -17,10 +17,10 @@ DB_URL = os.getenv(
 )
 
 # ---------------------------------------------------------------------------
-# Optuna-Optimized Parametric PINN (num_layers=3, hidden_dim=32)
+# Optuna-Optimized Parametric PINN (input_dim=6, num_layers=3, hidden_dim=32)
 # ---------------------------------------------------------------------------
 class TunedUAVEnginePINN(nn.Module):
-    def __init__(self, input_dim=5, hidden_dim=32, num_layers=3, output_dim=4):
+    def __init__(self, input_dim=6, hidden_dim=32, num_layers=3, output_dim=4):
         super(TunedUAVEnginePINN, self).__init__()
         layers = []
         in_dim = input_dim
@@ -36,7 +36,7 @@ class TunedUAVEnginePINN(nn.Module):
 
 
 class RetrainingWorker:
-    def __init__(self, min_samples_required=1000):
+    def __init__(self, min_samples_required=10):
         self.min_samples = min_samples_required
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -47,7 +47,7 @@ class RetrainingWorker:
         self.best_batch_size = 32
 
     def fetch_training_data(self) -> pd.DataFrame:
-        # Schema aligned with uav_aero_engine_metrics table definition
+        # Schema aligned with uav_aero_engine_metrics table (including altitude_m)
         query = """
         SELECT 
             COALESCE(actual_cht, 0.0) AS actual_cht, 
@@ -55,6 +55,7 @@ class RetrainingWorker:
             COALESCE(actual_oil_pressure, 0.0) AS actual_oil,
             COALESCE(physics_cht, 0.0) AS physics_cht, 
             COALESCE(physics_egt, 0.0) AS physics_egt,
+            COALESCE(altitude_m, 0.0) AS altitude_m,
             COALESCE(residual_cht, 0.0) AS residual_cht, 
             COALESCE(residual_egt, 0.0) AS residual_egt, 
             (COALESCE(actual_oil_pressure, 0.0) - COALESCE(physics_oil_pressure, 0.0)) AS residual_oil,
@@ -77,7 +78,8 @@ class RetrainingWorker:
             logging.warning(f"[!] Insufficient records for retraining ({len(df)}/{self.min_samples}). Skipping.")
             return
 
-        X = df[['actual_cht', 'actual_egt', 'actual_oil', 'physics_cht', 'physics_egt']].values
+        # 6 Input Features: CHT_act, EGT_act, OIL_act, CHT_phys, EGT_phys, ALT_m
+        X = df[['actual_cht', 'actual_egt', 'actual_oil', 'physics_cht', 'physics_egt', 'altitude_m']].values
         Y = df[['residual_cht', 'residual_egt', 'residual_oil', 'health_index_pct']].values
 
         X_tensor = torch.tensor(X, dtype=torch.float32)
@@ -87,7 +89,7 @@ class RetrainingWorker:
         loader = DataLoader(dataset, batch_size=self.best_batch_size, shuffle=True)
 
         model = TunedUAVEnginePINN(
-            input_dim=5, 
+            input_dim=6, 
             hidden_dim=self.best_hidden_dim, 
             num_layers=self.best_num_layers, 
             output_dim=4
@@ -98,7 +100,7 @@ class RetrainingWorker:
         criterion = nn.MSELoss()
 
         model.train()
-        logging.info("[+] Retraining PINN with Optuna-tuned parameters...")
+        logging.info("[+] Retraining PINN with 6-feature vector (Altitude included)...")
 
         for epoch in range(epochs):
             total_loss = 0.0
@@ -120,7 +122,7 @@ class RetrainingWorker:
         temp_checkpoint = "pinn_model_tuned_temp.pth"
         torch.save(model.state_dict(), temp_checkpoint)
         os.replace(temp_checkpoint, checkpoint_path)
-        logging.info(f"[✔] Successfully deployed tuned PINN checkpoint to '{checkpoint_path}'!")
+        logging.info(f"[✔] Successfully deployed 6-feature PINN checkpoint to '{checkpoint_path}'!")
 
 
 if __name__ == "__main__":
