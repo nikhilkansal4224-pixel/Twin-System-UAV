@@ -10,7 +10,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Handle cross-module architecture components
-from src.ai_pipeline.pinn_model import PhysicsInformedNN
+from src.models.pinn_model import PhysicsInformedNN
 from src.ai_pipeline.loss_functions import PhysicsInformedLoss
 from src.ai_pipeline.lstm_rul import LSTMRULEstimator
 from src.ai_pipeline.fault_generator import SyntheticFaultInverter
