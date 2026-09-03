@@ -14,7 +14,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = BASE_DIR / "reports"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+# Inside src/reports/generate_report.py
+DB_URL = os.getenv("DATABASE_URL","postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
 
 # 1. Pull data based on TIME WINDOW (e.g. last 30 minutes) or increase row limit
 def fetch_mission_data(minutes_back: int = 30):

@@ -21,7 +21,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # =====================================================================
 # 1. KAFKA BROKER & TOPIC CONFIGURATION
 # =====================================================================
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
+# Force IPv4 127.0.0.1 to avoid IPv6 (::1) socket disconnection issues on macOS
+KAFKA_BROKER = os.getenv("KAFKA_BOOTSTRAP_SERVERS", os.getenv("KAFKA_BROKER", "127.0.0.1:9092"))
 INPUT_TOPIC = os.getenv("KAFKA_TOPIC", "uav-engine-telemetry")
 CONSUMER_GROUP = "digital-twin-orchestrator"
 
@@ -35,12 +36,13 @@ def initialize_kafka_consumer():
             group_id=CONSUMER_GROUP,
             value_deserializer=lambda x: json.loads(x.decode("utf-8")),
             auto_offset_reset="latest",
-            consumer_timeout_ms=3000  # Non-blocking timeout for standby check
+            # Remove or set consumer_timeout_ms to float('inf') so it stays running
+            enable_auto_commit=True
         )
-        logging.info(f"[+] Successfully Connected to Kafka Queue: '{INPUT_TOPIC}'")
+        logging.info(f"[+] Successfully Connected to Kafka Queue: '{INPUT_TOPIC}' on {KAFKA_BROKER}")
         return consumer
     except Exception as e:
-        logging.warning(f"[!] Unable to connect to Kafka Broker ({e}). Pipeline running in fallback mode.")
+        logging.warning(f"[!] Unable to connect to Kafka Broker on {KAFKA_BROKER} ({e}). Pipeline running in fallback mode.")
         return None
 
 

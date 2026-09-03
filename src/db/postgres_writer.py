@@ -1,12 +1,26 @@
 import psycopg
 import logging
 import os
+import psycopg2
 
 class PostgresWriter:
-    def __init__(self, db_url: str = None):
-        self.db_url = db_url or os.getenv(
-            "DATABASE_URL", 
-            "postgresql://grafana:Grafana%40123@localhost:5432/grafana"
+    def __init__(self, host=None, dbname=None, user=None, password=None, port=None):
+        self.host = host or os.getenv("POSTGRES_HOST", "127.0.0.1")
+        self.dbname = dbname or os.getenv("POSTGRES_DB", "uav_telemetry")
+        self.user = user or os.getenv("POSTGRES_USER", "uav_user")
+        self.password = password or os.getenv("POSTGRES_PASSWORD", "uav_password")
+        self.port = port or os.getenv("POSTGRES_PORT", "5432")
+        
+        # Add db_url attribute
+        self.db_url = f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
+
+    def get_connection(self):
+        return psycopg2.connect(
+            host=self.host,
+            dbname=self.dbname,
+            user=self.user,
+            password=self.password,
+            port=self.port
         )
 
     def write_metrics(self, twin_state: dict):

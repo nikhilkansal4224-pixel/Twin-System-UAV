@@ -177,7 +177,7 @@ ORDER BY id DESC
 
 
 ---
-
+## Made With The Help Of AI
 ## 📄 License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.

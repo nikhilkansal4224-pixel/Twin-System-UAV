@@ -22,7 +22,7 @@ RETRAIN_PATH = BASE_DIR / "src" / "ai_pipeline" / "retrain_pipeline.py"
 ENV = os.environ.copy()
 ENV["PYTHONPATH"] = str(BASE_DIR)
 
-DB_URL = os.getenv("DATABASE_URL", "postgresql://grafana:Grafana%40123@localhost:5432/grafana")
+DB_URL = os.getenv("DATABASE_URL","postgresql://uav_user:uav_password@127.0.0.1:5432/uav_telemetry")
 
 # Process state handling
 if "consumer_proc" not in st.session_state:
