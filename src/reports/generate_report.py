@@ -134,4 +134,4 @@ def generate_pdf_report(minutes_back: int = 30, display_rows: int = 30):
     return report_filename
 
 if __name__ == "__main__":
-    generate_pdf_report(minutes_back=30, display_rows=30)
+    generate_pdf_report(minutes_back=30, display_rows=1000)
