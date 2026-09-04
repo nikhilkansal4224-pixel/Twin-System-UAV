@@ -1,130 +1,131 @@
-Here is the complete **`README.md`** file content formatted directly for copy-pasting into your project root:
-
-```markdown
 # 🚁 Indigenous Digital Twin System for UAV Aero-Piston Engines
 
-An end-to-end, edge-deployable **Digital Twin & Predictive Health Monitoring (PHM)** system for UAV aero-piston engines (e.g., Rotax 912 / 914 series). 
+An end-to-end, edge-deployable **Digital Twin & Predictive Health Monitoring (PHM)** system for UAV aero-piston engines (e.g., Rotax 912 / 914 series).
 
-Designed for deployment on Ground Control Station (GCS) edge hardware, this system ingests real-time CAN-bus engine telemetry, executes a **0D thermodynamic physics baseline**, computes residual deviations ($\Delta Y$), flags thermal anomalies via a **Physics-Informed Neural Network (PINN)**, and estimates **Remaining Useful Life (RUL)** using an LSTM sequence model.
+This system ingests real-time CAN-bus engine telemetry, computes a **0D thermodynamic physics baseline**, calculates residual deviations (ΔY = Actual − Physics-Expected), scores anomalies via a **Physics-Informed Neural Network (PINN)**, and estimates **Remaining Useful Life (RUL)** using an LSTM sequence model.
 
 ---
 
 ## 🛠️ System Architecture & Data Pipeline
 
-
 ```
-
-┌─────────────────┐    CAN Frame     ┌────────────────────────┐    Decoded Signals    ┌──────────────────────┐
-│  UAV Engine /   ├─────────────────►│ DBC Telemetry Decoder  ├────────────────────►│  0D Thermodynamic    │
-│ CAN Replay Log  │    (0x100/0x200) │ (src/1_ingestion)      │ (RPM, MAP, CHT, EGT)│  Reference Model     │
-└─────────────────┘                  └────────────────────────┘                     └──────────┬───────────┘
-│ Physics Baseline
-▼
-┌─────────────────┐   Health & RUL   ┌────────────────────────┐    Residual Deltas    ┌──────────────────────┐
-│ SQLite Database ├──────────────────┤   LSTM RUL Engine &    │◄───────────────────┤ Residual Calculator  │
-│ (data/db_file)  │  & Anomaly State │   PINN Diagnostics     │   ΔCHT = |Act-Phys|   │ (src/2_physics)      │
-└────────┬────────┘                  └────────────────────────┘                       └──────────────────────┘
-│
-▼
-┌─────────────────┐
-│ Grafana Dashboard│ (Live GCS Visualization)
-└─────────────────┘
-
+┌─────────────────┐   CAN Frame    ┌──────────────────────┐   Decoded Signals   ┌───────────────────────┐
+│  UAV Engine /    ├───────────────►│  DBC Telemetry       ├─────────────────────►│  0D Thermodynamic     │
+│  CAN Replay Log  │  (0x100/0x200) │  Decoder              │ (RPM, MAP, CHT, EGT) │  Reference Model       │
+└─────────────────┘                 └──────────────────────┘                       └──────────┬────────────┘
+                                                                                                │ Physics Baseline
+                                                                                                ▼
+┌─────────────────┐   Health & RUL  ┌──────────────────────┐   Residual Deltas    ┌───────────────────────┐
+│ SQLite Database  │◄────────────────┤  LSTM RUL Engine &    │◄──────────────────────┤ Residual Calculator   │
+│ (data/db_file)   │ & Anomaly State │  PINN Diagnostics     │  ΔCHT = |Actual-Phys| │                        │
+└────────┬─────────┘                 └──────────────────────┘                       └───────────────────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Grafana Dashboard │ (Live GCS Visualization)
+└──────────────────┘
 ```
 
 ---
 
 ## 🔑 Key Features
 
-* **Real-Time CAN Telemetry Decoding:** Ingests raw binary CAN frames (`0x100`, `0x200`) using DBC signal definitions.
-* **0D Thermodynamic Reference Model:** Solves First-Law differential equations (`SciPy solve_ivp`) to establish dynamic healthy baseline values for Cylinder Head Temperature (CHT) and Exhaust Gas Temperature (EGT).
-* **Residual Analytics ($\Delta Y$):** Isolates subtle thermal degradation by evaluating absolute deviations between actual telemetry and physics expectations.
-* **LSTM RUL & Degradation Predictor:** Multi-step time-series model predicting Remaining Useful Life in flight hours and Health Index percentage (%).
-* **Lightweight SQLite Persistence:** Zero-dependency, edge-friendly local database logging without background daemon overhead.
-* **Grafana Dashboard Integration:** Pre-configured SQL queries for live GCS telemetry plotting and anomaly alert triggering.
+- **Real-Time CAN Telemetry Decoding** — ingests raw binary CAN frames (`0x100`, `0x200`) using DBC signal definitions.
+- **0D Thermodynamic Reference Model** — solves first-law energy-balance equations (`scipy.solve_ivp`) to establish a dynamic, physics-based healthy baseline for CHT and EGT.
+- **Residual Analytics (ΔY)** — flags subtle thermal degradation by comparing actual telemetry against physics expectations, rather than fixed thresholds.
+- **LSTM RUL Predictor** — sequence model estimating Remaining Useful Life (flight-hours) and a Health Index (%).
+- **Physics-Informed Neural Network (PINN)** — scores fault severity, trained with a loss function that penalizes physically implausible predictions (ideal gas law, energy conservation), not just label mismatch.
+- **Lightweight SQLite Persistence** — zero-dependency, edge-friendly logging with no background daemon.
+- **Grafana Dashboard Integration** — pre-configured queries for live GCS telemetry plotting and anomaly alerting.
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-uav-engine-digital-twin/
-├── create_db.py                  # Standalone script to initialize SQLite schema
-├── populate_db.py                # Script to populate synthetic test telemetry
-├── main.py                       # Core 10Hz live execution loop & orchestrator
+Twin-System-UAV/
+├── main.py                          # Canonical entry point — live 10Hz simulation & orchestration loop
+├── create_db.py                     # Initializes the SQLite schema
+├── populate_db.py                   # Seeds synthetic test telemetry
 ├── data/
-│   └── engine_telemetry.db       # SQLite time-series database (auto-generated)
-├── dbc/
-│   └── uav_engine.dbc            # CAN matrix definition file
-├── models/
-│   └── saved_weights/
-│       ├── pinn_weights.pth      # Pre-trained PINN PyTorch model
-│       └── lstm_rul_weights.pth  # Pre-trained LSTM sequence model
-└── src/
-    ├── 1_ingestion/
-    │   └── dbc_decoder.py        # CAN ID parser
-    ├── 2_physics_engine/
-    │   ├── thermodynamics.py     # 0D ODE thermodynamic solver
-    │   └── residual_calculator.py# Residual compute engine (ΔY)
-    ├── 3_pinn_rul/
-    │   └── lstm_rul_engine.py    # PyTorch inference module
-    └── 4_orchestration/
-        └── sqlite_writer.py      # Local database persistence layer
-
+│   └── engine_telemetry.db          # SQLite time-series database (auto-generated)
+├── config/
+│   ├── engine_rotax914.json         # Rotax 914 engine geometry/constants
+│   ├── kafka_config.json            # Kafka broker/topic config
+│   └── uav_telemetry.dbc            # CAN signal matrix definition
+├── models/saved_weights/
+│   ├── pinn_weights.pth             # Pretrained PINN weights (used by main.py)
+│   └── lstm_rul_weights.pth         # Pretrained LSTM weights (used by main.py)
+├── src/
+│   ├── ingestion/
+│   │   ├── dbc_decoder.py           # CAN frame → physical value decoder
+│   │   ├── can_listener.py          # Real CAN-bus hardware listener
+│   │   └── kafka_producer.py        # Streams decoded telemetry to Kafka
+│   ├── physics_engine/
+│   │   ├── thermodynamics.py        # 0D ODE thermodynamic solver (used by main.py)
+│   │   ├── residual_calculator.py   # Residual (ΔY) computation
+│   │   ├── combustion.py            # Standalone Wiebe combustion model
+│   │   ├── heat_transfer.py         # Standalone Woschni heat-transfer model
+│   │   └── kinematics.py            # Standalone crank-slider kinematics
+│   ├── ai_pipeline/
+│   │   ├── pinn_model.py            # PINN architecture (used by main.py)
+│   │   ├── lstm_rul.py              # LSTM RUL model (used by main.py)
+│   │   ├── loss_functions.py        # Physics-informed loss (gas law + energy conservation)
+│   │   ├── fault_generator.py       # Synthetic fault-injection training data generator
+│   │   └── train_and_export.py      # Offline training script, exports .pth weights
+│   └── orchestration/
+│       ├── qlite_writer.py          # SQLite persistence layer (used by main.py)
+│       └── kafka_consumer.py        # Kafka-based streaming orchestration (alternate path)
+├── dashboard/grafana/
+│   └── uav_engine_twin_dashboard.json
+└── tests/
+    ├── test_0d_physics.py
+    └── test_can_decoder.py
 ```
+
+> **Note on repo scope:** this repository also contains an in-progress secondary track (`src/main.py`, `src/db/postgres_writer.py`, `src/streaming/`, `src/models/`, `src/can_bus/`, `app_desktop.py`) exploring a Postgres/Kafka-backed desktop application version of this system. It is **not** the entry point described in this README and is not required to run the core digital twin pipeline documented here.
 
 ---
 
 ## ⚙️ Installation & Setup
 
-### **1. Prerequisites**
+### 1. Prerequisites
+- Python 3.9+
+- Grafana Server (optional, for GCS visualization)
 
-* Python 3.9+
-* Grafana Server (for GCS visualization)
-
-### **2. Clone & Install Dependencies**
+### 2. Clone & Install Dependencies
 
 ```bash
-git clone [https://github.com/your-org/uav-engine-digital-twin.git](https://github.com/your-org/uav-engine-digital-twin.git)
-cd uav-engine-digital-twin
+git clone https://github.com/nikhilkansal4224-pixel/Twin-System-UAV.git
+cd Twin-System-UAV
 
-# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# Install required Python packages
-pip install torch numpy scipy python-can cantools
-
+pip install -r requirements.txt
 ```
 
-### **3. Initialize SQLite Database**
-
-Run the initialization script to set up the local data directory and database schema:
+### 3. Initialize the SQLite Database
 
 ```bash
 python3 create_db.py
-
 ```
 
-*(Optional)* Populate sample data to verify database access:
+Optionally, seed sample data:
 
 ```bash
 python3 populate_db.py
-
 ```
 
 ---
 
 ## 🚀 Running the Digital Twin
 
-Execute the live simulation execution loop:
-
 ```bash
 python3 main.py
-
 ```
 
-### **Expected Console Output:**
+### Expected Console Output
 
 ```text
 ======================================================================
@@ -142,42 +143,31 @@ Target Application: MALE UAV Ground Control Station (GCS) Edge Deployment
 
 Starting Edge Execution Loop (Simulating 10Hz CAN-bus Telemetry)...
 ---------------------------------------------------------------------------
-2026-08-26 15:10:00 [INFO] Iter 01 | CHT: 115.0°C (Δ 0.0) | EGT: 820.0°C (Δ 0.0) [NOMINAL]
-2026-08-26 15:10:00 [INFO]        --> HEALTH: 100.0% | RUL: 1200.0 hrs | STATUS: NOMINAL
-
+Iter 01 | CHT: 115.0°C (Δ 0.0) | EGT: 820.0°C (Δ 0.0) [NOMINAL]
+       --> HEALTH: 100.0% | RUL: 1200.0 hrs | STATUS: NOMINAL
 ```
 
 ---
 
 ## 📊 Grafana Visualization Setup
 
-To set up real-time monitoring on Grafana:
-
 1. Launch Grafana (`http://127.0.0.1:3000`).
-2. Navigate to **Connections** $\rightarrow$ **Data Sources** $\rightarrow$ **Add data source** $\rightarrow$ **SQLite**.
-3. Set the database path to:
-```text
-/Users/<your-username>/path-to-repo/data/engine_telemetry.db
+2. Navigate to **Connections → Data Sources → Add data source → SQLite**.
+3. Set the database path to the absolute path of `data/engine_telemetry.db` on your machine.
+4. Example query for CHT actual vs. physics baseline:
 
-```
-
-
-4. Query CHT & EGT actuals vs physics baselines in Grafana panels:
 ```sql
-SELECT 
-  datetime(timestamp, 'unixepoch') AS time, 
-  actual_cht, 
+SELECT
+  datetime(timestamp, 'unixepoch') AS time,
+  actual_cht,
   physics_cht,
   residual_cht
-FROM uav_aero_engine_metrics 
-ORDER BY id DESC
-
+FROM uav_aero_engine_metrics
+ORDER BY id DESC;
 ```
 
-
-
 ---
-## Made With The Help Of AI
+
 ## 📄 License
 
-This project is licensed under the MIT License - see the `LICENSE` file for details.
+This project is licensed under the MIT License — see the `LICENSE` file for details.
