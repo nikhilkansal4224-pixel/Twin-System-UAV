@@ -7,7 +7,7 @@ This system ingests real-time CAN-bus engine telemetry, computes a **0D thermody
 ---
 
 ## 🛠️ System Architecture & Data Pipeline
-
+a
 ```
 ┌─────────────────┐   CAN Frame    ┌──────────────────────┐   Decoded Signals   ┌───────────────────────┐
 │  UAV Engine /    ├───────────────►│  DBC Telemetry       ├─────────────────────►│  0D Thermodynamic     │
